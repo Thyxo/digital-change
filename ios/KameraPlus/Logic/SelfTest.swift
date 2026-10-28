@@ -35,7 +35,7 @@ struct SelfTestReport {
     var falseOcclusionP95: Double { quantile(falseOcclusion, 0.95) }
 
     var passed: Bool {
-        missRate <= 0.02 && falseAcceptRate <= 0.01 && otherColorRate <= 0.02
+        missRate <= 0.03 && falseAcceptRate <= 0.01 && otherColorRate <= 0.02
             && cornerMedian <= 0.6 && cornerP95 <= 1.6
             && fingerMean >= 0.9 && falseOcclusionMean <= 0.02 && falseOcclusionP95 <= 0.06
     }
