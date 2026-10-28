@@ -6,10 +6,8 @@ import UIKit
 
 enum CaptureMode { case photo, video }
 
-enum LearnKind: String { case red, blue, background }
-
 enum PanelStatus {
-    case ready, off, noCard, calibrating, revealed
+    case ready, off, noCard, revealed
 }
 
 struct LogEntry: Identifiable {
@@ -28,10 +26,11 @@ struct FocusMark: Equatable {
 final class LiveReadout: ObservableObject {
     @Published var status: PanelStatus = .noCard
     @Published var fps = 0.0
-    @Published var maskPercent = 0.0
+    @Published var score = 0.0
+    @Published var occluded = 0.0
+    @Published var ms = 0.0
     @Published var preview: UIImage?
     @Published var shake = 0.0
-    @Published var light = 0.0
 }
 
 /// Binder kamera, analyse, tilstandsmaskine, visning og knapper sammen (som Engine i MindTrace).
@@ -60,8 +59,6 @@ final class Engine: ObservableObject, PipelineDelegate {
     @Published var panelOpen = false { didSet { if panelOpen != oldValue { panelChanged() } } }
     @Published var galleryOpen = false { didSet { if galleryOpen != oldValue { galleryChanged() } } }
     @Published private(set) var log: [LogEntry] = []
-    @Published private(set) var learning: LearnKind?
-    @Published private(set) var learnMessage: String?
     @Published private(set) var selfTestLines: [String] = []
     @Published private(set) var selfTestProgress: Double?
     let readout = LiveReadout()
@@ -84,22 +81,20 @@ final class Engine: ObservableObject, PipelineDelegate {
     private var lastReadout = 0.0
     private var lastShutterTap = Date.distantPast
     private var recordTimer: Timer?
-    private var modelKey: ModelKey?
-    private var modelGeneration = 0
     private var focusCounter = 0
-
-    private struct ModelKey: Equatable {
-        var source: Palette
-        var target: Palette
-        var background: BackgroundModel?
-        var sensitivity: Double
-    }
+    /// De ægte Rider Back-skabeloner (ios/Cards i app-bundtet).
+    let templates: CardTemplates?
+    private var sourceColor: CardColor?
 
     init(settings: AppSettings) {
         self.settings = settings
         let p = Pipeline()
         pipeline = p
         renderer = Renderer(mailbox: p.mailbox)
+        let dir = Bundle.main.url(forResource: "Cards", withExtension: nil)
+        templates = dir.flatMap { try? CardTemplates.load(directory: $0) }
+        if let dir { renderer.loadCards(directory: dir) }
+        renderer.geometry = templates?.blue.geometry
         state.config = settings.effectConfig
         state.effectActive = settings.effectActive
         state.launch(wasRevealed: settings.wasRevealed)
@@ -157,6 +152,7 @@ final class Engine: ObservableObject, PipelineDelegate {
         pipeline.mailbox.clear()
         pipeline.resetTracking()
         if useSynthetic {
+            synthetic.template = templates?.of(settings.disguise.source)
             synthetic.sink = pipeline
             source = synthetic
             pipeline.camera = nil
@@ -191,7 +187,7 @@ final class Engine: ObservableObject, PipelineDelegate {
         applyRender()
         updatePipelineConfig()
         updateRenderEffect()
-        rebuildModelsIfNeeded()
+        applyCards()
         if started {
             let wantSynthetic = useSynthetic
             if wantSynthetic != (source === synthetic) { chooseSource() }
@@ -203,6 +199,19 @@ final class Engine: ObservableObject, PipelineDelegate {
         renderer.mirrorSaved = settings.mirrorSaved && isFront
         renderer.zoom = zoomFactor
         renderer.showMask = settings.showMask
+        renderer.targetColor = settings.disguise.target
+        renderer.lodBias = Float(-0.25 + 2.25 * settings.blur)
+        renderer.grain = Float(settings.grain)
+    }
+
+    /// Kortet kameraet ser (kilde) til sporingen, målkortet til visningen.
+    private func applyCards() {
+        let src = settings.disguise.source
+        guard src != sourceColor, let t = templates?.of(src) else { return }
+        sourceColor = src
+        pipeline.setSource(t)
+        synthetic.template = t
+        pipeline.resetTracking()
     }
 
     /// Frontkameraet viser som standard et beskåret udsnit (som iPhone: 1×), "udvid" viser hele billedet (0,8×).
@@ -211,34 +220,11 @@ final class Engine: ObservableObject, PipelineDelegate {
     private func updatePipelineConfig() {
         pipeline.setConfig(PipelineConfig(
             analyze: isFront && (settings.effectActive || panelOpen),
-            geometry: settings.geometry,
             lockExposure: settings.lockExposure && settings.effectActive,
             shake: settings.has(.shakeCard),
             shakeSensitivity: settings.shakeSensitivity,
+            occlusionSensitivity: settings.occlusionSensitivity,
             wantPreview: panelOpen))
-    }
-
-    private func rebuildModelsIfNeeded() {
-        let key = ModelKey(source: settings.sourcePalette, target: settings.targetPalette,
-                           background: settings.background, sensitivity: settings.sensitivity)
-        guard key != modelKey else { return }
-        modelKey = key
-        modelGeneration += 1
-        let gen = modelGeneration
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let classifier = CardClassifier(source: key.source, background: key.background ?? .empty, sensitivity: key.sensitivity)
-            let classLUT = classifier.buildLUT(bits: 6)
-            let transfer = ColorTransfer(source: key.source, target: key.target)
-            let lut = transfer.buildLUT(size: 65)
-            let light = IlluminationModel(source: key.source, target: key.target)
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, gen == self.modelGeneration else { return }
-                    self.pipeline.setModels(classifier: classifier, lut: classLUT, illumination: light)
-                    self.renderer.setLUT(lut, size: 65)
-                }
-            }
-        }
     }
 
     /// Hvad visningen skal tegne lige nu.
@@ -271,12 +257,12 @@ final class Engine: ObservableObject, PipelineDelegate {
         if panelOpen && s.time - lastReadout >= 0.2 {
             lastReadout = s.time
             readout.fps = s.fps
-            readout.maskPercent = s.coverage * 100
+            readout.score = s.score * 100
+            readout.occluded = s.occluded * 100
+            readout.ms = s.ms
             readout.shake = s.shake
-            readout.light = s.k
             let st: PanelStatus
-            if learning != nil { st = .calibrating }
-            else if !settings.effectActive { st = .off }
+            if !settings.effectActive { st = .off }
             else if !state.phase.isDisguised { st = .revealed }
             else if s.cardVisible { st = .ready }
             else { st = .noCard }
@@ -384,11 +370,10 @@ final class Engine: ObservableObject, PipelineDelegate {
                                   frameHeight: Double(f.frameHeight), zoom: zoomFactor, mirrored: renderer.mirror)
             let fp = map.framePoint(fromView: Point2(p.x, p.y))
             framePoint = fp
-            if !f.mask.isEmpty {
-                let k = Double(f.factor)
-                let r = 40 / map.pointsPerPixel / k
-                hit = MaskProcessor.hitFraction(f.mask, width: f.maskWidth, height: f.maskHeight,
-                                                x: fp.x / k, y: fp.y / k, radius: r) >= 0.3
+            // ramt = fingeren er på kortet (med lidt margen: et tryk lige på kanten tæller)
+            if let card = f.card, let g = templates?.blue.geometry, let inv = card.homography.inverse {
+                let q = inv.apply(fp)
+                hit = g.cardDistance(q) < 0.04 * g.width
             }
             camera?.focus(at: CGPoint(x: fp.x / Double(f.frameWidth), y: fp.y / Double(f.frameHeight)))
         }
@@ -537,76 +522,15 @@ final class Engine: ObservableObject, PipelineDelegate {
         if galleryOpen { source?.stop() } else { source?.start() }
     }
 
-    // MARK: Kalibrering
-
-    func learn(_ kind: LearnKind) {
-        guard learning == nil else { return }
-        learning = kind
-        learnMessage = nil
-        readout.status = .calibrating
-        pipeline.learn(seconds: 3) { [weak self] frames in
-            self?.finishLearn(kind, frames)
-        }
-    }
-
-    private func finishLearn(_ kind: LearnKind, _ frames: [RGBAImage]) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            var palette: Palette?
-            var bg: BackgroundModel?
-            var hue: Double?
-            if kind == .background {
-                bg = BackgroundModel.learn(frames)
-            } else {
-                let out = PaletteLearner.learn(frames)
-                palette = out.palette
-                hue = out.hueDegrees
-            }
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    self?.applyLearned(kind, palette: palette, background: bg, hue: hue, frames: frames.count)
-                }
-            }
-        }
-    }
-
-    private func applyLearned(_ kind: LearnKind, palette: Palette?, background: BackgroundModel?, hue: Double?, frames: Int) {
-        learning = nil
-        switch kind {
-        case .background:
-            if let background, frames > 0 {
-                settings.background = background
-                learnMessage = "Baggrund lært (\(background.pixelCount) farvede pixels i \(frames) billeder)."
-            } else {
-                learnMessage = "Ingen billeder fra kameraet."
-            }
-        case .red, .blue:
-            guard let p = palette else {
-                learnMessage = "Intet farvet kort fundet. Hold kortet midt for kameraet, 2–5 cm over linsen, og prøv igen."
-                return
-            }
-            let deg = Int((hue ?? p.hueDegrees).rounded())
-            if kind == .red && !p.isRedLike {
-                learnMessage = "Det ligner ikke et rødt kort (farvetone \(deg)°). Prøv igen."
-                return
-            }
-            if kind == .blue && !p.isBlueLike {
-                learnMessage = "Det ligner ikke et blåt kort (farvetone \(deg)°). Prøv igen."
-                return
-            }
-            if kind == .red { settings.redPalette = p } else { settings.bluePalette = p }
-            learnMessage = "\(kind == .red ? "Rødt" : "Blåt") kort lært (farvetone \(deg)°, \(p.count) pixels)."
-        }
-        addLog(learnMessage ?? "")
-    }
-
     // MARK: Selvtest
 
     func runSelfTest() {
-        guard selfTestProgress == nil else { return }
+        guard selfTestProgress == nil, let templates else { return }
         selfTestProgress = 0
         selfTestLines = []
+        let source = settings.disguise.source
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let r = SelfTest.run(count: 5000, seed: 2026) { p in
+            let r = SelfTest.run(templates: templates, source: source, count: 300, seed: 2026) { p in
                 DispatchQueue.main.async { MainActor.assumeIsolated { self?.selfTestProgress = p } }
             }
             let lines = r.lines

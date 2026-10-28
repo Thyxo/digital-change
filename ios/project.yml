@@ -15,6 +15,9 @@ targets:
     platform: iOS
     sources:
       - path: KameraPlus
+      # De ægte Rider Back-kort (scripts/prepare-cards.py) som mappe i app-bundtet: Cards/rider-*.png/.rgb/.json
+      - path: Cards
+        type: folder
     info:
       path: KameraPlus/Info.plist
       properties:

@@ -10,14 +10,14 @@ struct FrameOutput {
     let time: CMTime
     let frameWidth: Int
     let frameHeight: Int
-    let factor: Int
-    let maskWidth: Int
-    let maskHeight: Int
-    /// Kortmasken i analyseopløsning (0–255). Tom når der ikke er analyseret.
-    let mask: [UInt8]
-    let gain: ChannelGain
-    let cardVisible: Bool
-    let coverage: Double
+    /// Kortet i kamerabilledets pixels (homografi fra kanoniske kortkoordinater). nil = intet kort.
+    let card: CardTrack?
+    /// Synlighed og lokal lysstyrke (2 bytes pr. pixel), dækker hele billedet i `visWidth`×`visHeight`.
+    let visibility: [UInt8]
+    let visWidth: Int
+    let visHeight: Int
+    let occluded: Double
+    var cardVisible: Bool { card != nil }
     /// I kamerabilledets pixels.
     let centroid: Point2?
     let bounds: RectD?
@@ -47,10 +47,10 @@ final class MotionState: @unchecked Sendable {
 
 struct PipelineConfig: Equatable {
     var analyze = true
-    var geometry = true
     var lockExposure = true
     var shake = false
     var shakeSensitivity: ShakeSensitivity = .normal
+    var occlusionSensitivity = 0.5
     var wantPreview = false
 }
 
@@ -58,9 +58,10 @@ struct PipelineSummary {
     var time: Double
     var cardVisible: Bool
     var analyzed: Bool
-    var coverage: Double
+    var score: Double
+    var occluded: Double
     var fps: Double
-    var k: Double
+    var ms: Double
     var shake: Double
 }
 
@@ -71,9 +72,9 @@ protocol PipelineDelegate: AnyObject {
     func pipelineDidPreview(_ preview: CGImage)
 }
 
-/// Alt arbejde pr. kamerabillede, på én seriel kø: nedskalering til ca. 270 px bredde, farvemaske,
-/// lys-tilpasning, Vision-firkant, ryst-detektion og eksponeringslås. Resultatet lægges i postkassen,
-/// som Metal-visningen læser.
+/// Alt arbejde pr. kamerabillede, på én seriel kø: nedskalering til ca. 540 px bredde, mønster-sporing af det
+/// fysiske Rider Back-kort (CardTracker), Vision-firkant som startgæt, ryst-detektion og eksponeringslås.
+/// Resultatet lægges i postkassen, som Metal-visningen læser.
 final class Pipeline: FrameSink, @unchecked Sendable {
     let queue = DispatchQueue(label: "kamera.frames", qos: .userInteractive)
     let mailbox = FrameMailbox()
@@ -81,9 +82,9 @@ final class Pipeline: FrameSink, @unchecked Sendable {
     weak var delegate: PipelineDelegate?
     weak var camera: CameraSource?
 
-    private let tracker = RectangleTracker()
-    private var analyzer: CardAnalyzer?
-    private var lowres = RGBAImage(width: 1, height: 1)
+    private let rectangles = RectangleTracker()
+    private var tracker: CardTracker?
+    private var image = RGBAImage(width: 1, height: 1)
     private let configLock = NSLock()
     private var config = PipelineConfig()
     private var exposure = ExposureLockPolicy()
@@ -93,9 +94,9 @@ final class Pipeline: FrameSink, @unchecked Sendable {
     private var fpsStart = CACurrentMediaTime()
     private var fps = 0.0
 
-    private var learnFrames: [RGBAImage] = []
-    private var learnUntil = 0.0
-    private var learnDone: (([RGBAImage]) -> Void)?
+    /// Testvideoens egen firkant (i billedets pixels) – i stedet for Vision, som ikke ser den lyse kant mod loftet.
+    /// Sættes og læses kun på pipelinens kø.
+    var syntheticHint: Quad?
 
     /// Shake-målerens værdi (0…1) til menuen.
     private(set) var shakeMeter = 0.0
@@ -108,33 +109,19 @@ final class Pipeline: FrameSink, @unchecked Sendable {
         configLock.lock(); defer { configLock.unlock() }; return config
     }
 
-    /// Ny farvemodel (bygget i baggrunden).
-    func setModels(classifier: CardClassifier, lut: [UInt8], illumination: IlluminationModel) {
+    /// Skabelonen for det kort, kameraet ser (blåt i "blå vises som rødt").
+    func setSource(_ template: CardTemplate) {
         queue.async { [weak self] in
             guard let self else { return }
-            if let a = self.analyzer {
-                a.update(classifier: classifier, lut: lut)
-            } else {
-                self.analyzer = CardAnalyzer(classifier: classifier, lut: lut)
-            }
-            self.analyzer?.illumination = illumination
+            if self.tracker?.template.color != template.color { self.tracker = CardTracker(template: template) }
         }
     }
 
     func resetTracking() {
         queue.async { [weak self] in
-            self?.analyzer?.reset()
-            self?.tracker.reset()
+            self?.tracker?.reset()
+            self?.rectangles.reset()
             self?.shake.reset()
-        }
-    }
-
-    /// Saml billeder i `seconds` sekunder til "Lær kort" / "Lær baggrund".
-    func learn(seconds: Double, done: @escaping ([RGBAImage]) -> Void) {
-        queue.async { [weak self] in
-            self?.learnFrames = []
-            self?.learnUntil = CACurrentMediaTime() + seconds
-            self?.learnDone = done
         }
     }
 
@@ -142,40 +129,32 @@ final class Pipeline: FrameSink, @unchecked Sendable {
 
     func handle(_ pb: CVPixelBuffer, time: CMTime) {
         let cfg = currentConfig
+        let started = CACurrentMediaTime()
         let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
-        let factor = max(1, Int((Double(w) / 270).rounded()))
-        CVPixelBufferLockBaseAddress(pb, .readOnly)
-        if let base = CVPixelBufferGetBaseAddress(pb) {
-            Downsample.box(base: UnsafeRawPointer(base), width: w, height: h, bytesPerRow: CVPixelBufferGetBytesPerRow(pb),
-                           bgra: true, factor: factor, into: &lowres)
-        }
-        CVPixelBufferUnlockBaseAddress(pb, .readOnly)
-        let now = CACurrentMediaTime()
+        let factor = max(1, Int((Double(w) / 540).rounded()))
+        let f = Double(factor)
         serial += 1
 
-        // Kalibrering
-        if learnUntil > 0 {
-            if serial % 2 == 0 { learnFrames.append(lowres) }
-            if now >= learnUntil {
-                let frames = learnFrames, done = learnDone
-                learnFrames = []; learnUntil = 0; learnDone = nil
-                DispatchQueue.main.async { done?(frames) }
-            }
-        }
-
-        var result = MaskResult()
+        var output = TrackerOutput()
         var analyzed = false
-        let f = Double(factor)
-        if cfg.analyze, let a = analyzer {
-            let lw = Double(lowres.width), lh = Double(lowres.height)
-            let quads = cfg.geometry
-                ? tracker.quads(now: now).map { Quad(corners: $0.corners.map { Point2($0.x * lw, $0.y * lh) }) }
-                : []
-            result = a.analyze(lowres, quads: quads)
+        if cfg.analyze, let tracker {
+            CVPixelBufferLockBaseAddress(pb, .readOnly)
+            if let base = CVPixelBufferGetBaseAddress(pb) {
+                Downsample.box(base: UnsafeRawPointer(base), width: w, height: h, bytesPerRow: CVPixelBufferGetBytesPerRow(pb),
+                               bgra: true, factor: factor, into: &image)
+            }
+            CVPixelBufferUnlockBaseAddress(pb, .readOnly)
+            tracker.config.occlusionSensitivity = cfg.occlusionSensitivity
+            let iw = Double(image.width), ih = Double(image.height)
+            var cands = rectangles.quads(now: started).map { Quad(corners: $0.corners.map { Point2($0.x * iw, $0.y * ih) }) }
+            if let hint = syntheticHint { cands.insert(Quad(corners: hint.corners.map { $0 * (1 / f) }), at: 0) }
+            output = tracker.update(image, candidates: cands)
             analyzed = true
-            if cfg.geometry { tracker.submit(pb, cardVisible: result.cardVisible, now: now) }
+            // Vision kun når kortet ikke allerede følges sikkert
+            let needQuads = output.track == nil || !output.fresh || output.track!.score < 0.75
+            rectangles.submit(pb, often: needQuads, now: started)
             if cfg.lockExposure {
-                if let change = exposure.update(cardVisible: result.cardVisible, at: now) { camera?.setExposureLocked(change) }
+                if let change = exposure.update(cardVisible: output.track != nil, at: started) { camera?.setExposureLocked(change) }
             } else if exposure.reset() != nil {
                 camera?.setExposureLocked(false)
             }
@@ -183,14 +162,20 @@ final class Pipeline: FrameSink, @unchecked Sendable {
             camera?.setExposureLocked(false)
         }
 
+        // kort i kamerabilledets pixels
+        var card: CardTrack?
+        if var t = output.track {
+            t.homography = Homography.scale(f, f) * t.homography
+            t.quad = Quad(corners: t.quad.corners.map { $0 * f })
+            card = t
+        }
+        let cardWidth = card.map { $0.quad.shortSide }
+
         // Ryst kortet
-        var cardWidth: Double?
-        if let q = result.quad { cardWidth = q.shortSide * f } else if let b = result.bounds { cardWidth = min(b.width, b.height) * f }
-        if analyzed && cfg.shake, result.cardVisible, let c = result.centroid, let cw = cardWidth {
+        if analyzed && cfg.shake, let c = card, let cw = cardWidth {
             shake.sensitivity = cfg.shakeSensitivity
-            let center = result.quad.map { $0.centroid * f } ?? c * f
-            let corners = result.quad?.corners.map { $0 * f }
-            if shake.push(CardTrackSample(t: now, center: center, corners: corners, cardWidth: cw, phoneStill: motion.phoneStill)) {
+            if shake.push(CardTrackSample(t: started, center: c.quad.centroid, corners: c.quad.corners, cardWidth: cw,
+                                          phoneStill: motion.phoneStill)) {
                 DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.delegate?.pipelineDidShake() } }
             }
             shakeMeter = shake.meter
@@ -198,46 +183,67 @@ final class Pipeline: FrameSink, @unchecked Sendable {
             shakeMeter = 0
         }
 
+        // synlighed + lysstyrke flettet til én RG-tekstur
+        var vis: [UInt8] = []
+        if card != nil, !output.visibility.isEmpty {
+            vis = [UInt8](repeating: 0, count: output.visibility.count * 2)
+            for i in 0..<output.visibility.count {
+                vis[i * 2] = output.visibility[i]
+                vis[i * 2 + 1] = output.shade[i]
+            }
+        }
+
         let out = FrameOutput(
-            pixelBuffer: pb, time: time, frameWidth: w, frameHeight: h, factor: factor,
-            maskWidth: lowres.width, maskHeight: lowres.height,
-            mask: analyzed ? result.mask : [], gain: analyzer?.gain ?? .identity,
-            cardVisible: analyzed && result.cardVisible, coverage: analyzed ? result.coverage : 0,
-            centroid: result.centroid.map { $0 * f }, bounds: result.bounds.map { RectD(minX: $0.minX * f, minY: $0.minY * f, maxX: $0.maxX * f, maxY: $0.maxY * f) },
-            cardWidth: cardWidth, serial: serial)
+            pixelBuffer: pb, time: time, frameWidth: w, frameHeight: h, card: card,
+            visibility: vis, visWidth: output.visWidth, visHeight: output.visHeight, occluded: output.occluded,
+            centroid: card?.quad.centroid, bounds: card?.quad.bounds, cardWidth: cardWidth, serial: serial)
         mailbox.put(out)
 
         fpsCount += 1
+        let now = CACurrentMediaTime()
         if now - fpsStart >= 1 {
             fps = Double(fpsCount) / (now - fpsStart)
             fpsCount = 0
             fpsStart = now
         }
-        let summary = PipelineSummary(time: now, cardVisible: out.cardVisible, analyzed: analyzed, coverage: out.coverage,
-                                      fps: fps, k: analyzer?.k ?? 0, shake: shakeMeter)
+        let summary = PipelineSummary(time: now, cardVisible: card != nil, analyzed: analyzed, score: card?.score ?? 0,
+                                      occluded: output.occluded, fps: fps, ms: (now - started) * 1000, shake: shakeMeter)
         DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.delegate?.pipelineDidAnalyze(summary) } }
 
-        if cfg.wantPreview && serial % 4 == 0, let img = Pipeline.preview(lowres, mask: analyzed ? result.mask : []) {
+        if cfg.wantPreview && analyzed && serial % 4 == 0,
+           let img = Pipeline.preview(image, track: output.track, visibility: output.visibility, visWidth: output.visWidth,
+                                      template: tracker?.template) {
             DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.delegate?.pipelineDidPreview(img) } }
         }
     }
 
-    /// Forhåndsvisning til menuen: billedet (spejlet som søgeren) med masken lagt over i magenta.
-    static func preview(_ img: RGBAImage, mask: [UInt8]) -> CGImage? {
-        let w = img.width, h = img.height
+    /// Forhåndsvisning til menuen (spejlet som søgeren, halv størrelse): grønt = her tegnes målkortet,
+    /// magenta = noget dækker kortet (fingre), hvid kant = kortets omrids.
+    static func preview(_ img: RGBAImage, track: CardTrack?, visibility: [UInt8], visWidth: Int, template: CardTemplate?) -> CGImage? {
+        let w = img.width / 2, h = img.height / 2
+        guard w > 0, h > 0 else { return nil }
         var px = [UInt8](repeating: 255, count: w * h * 4)
+        let inv = track.flatMap { (Homography.scale(0.5, 0.5) * $0.homography).inverse }
+        let geo = template?.geometry
         for y in 0..<h {
             for x in 0..<w {
-                let s = (y * w + (w - 1 - x)) * 4
+                let sx = w - 1 - x
+                let s = ((y * 2) * img.width + sx * 2) * 4
+                var r = Double(img.pixels[s]), g = Double(img.pixels[s + 1]), b = Double(img.pixels[s + 2])
+                if let inv, let geo {
+                    let q = inv.apply(Point2(Double(sx) + 0.5, Double(y) + 0.5))
+                    let cd = geo.cardDistance(q)
+                    if abs(cd) < 6 { r = 255; g = 255; b = 255 }
+                    else if geo.overlayDistance(q) < 0 {
+                        let v = visibility.isEmpty || sx >= visWidth ? 255 : Int(visibility[y * visWidth + sx])
+                        if v >= 128 { r *= 0.6; g = g * 0.6 + 100; b *= 0.6 } else { r = r * 0.4 + 150; g *= 0.4; b = b * 0.4 + 150 }
+                    }
+                }
                 let d = (y * w + x) * 4
-                let m = mask.isEmpty ? 0 : Double(mask[y * w + (w - 1 - x)]) / 255 * 0.55
-                px[d] = UInt8(Double(img.pixels[s]) * (1 - m) + 255 * m)
-                px[d + 1] = UInt8(Double(img.pixels[s + 1]) * (1 - m))
-                px[d + 2] = UInt8(Double(img.pixels[s + 2]) * (1 - m) + 255 * m)
+                px[d] = UInt8(min(255, r)); px[d + 1] = UInt8(min(255, g)); px[d + 2] = UInt8(min(255, b))
             }
         }
-        let data = Data(px) as CFData
-        guard let provider = CGDataProvider(data: data) else { return nil }
+        guard let provider = CGDataProvider(data: Data(px) as CFData) else { return nil }
         return CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
                        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
                        provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)

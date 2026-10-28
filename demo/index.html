@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Digital Flap – demo</title>
+<title>Digital Flap demo</title>
 <style>
   :root { --bg:#000; --panel:#1c1c1e; --text:#f2f2f2; --muted:#9a9a9f; --yellow:#fef657; --line:#2c2c2e; }
   * { box-sizing: border-box; }
@@ -24,243 +24,229 @@
   button { background:#2c2c2e; color:var(--text); border:0; border-radius:10px; padding:10px 12px; font:inherit; cursor:pointer; }
   button.primary { background:var(--yellow); color:#000; font-weight:600; }
   .status { font-weight:700; margin:8px 0 0; }
-  .swatch { display:inline-block; width:14px; height:14px; border-radius:4px; vertical-align:-2px; margin-right:6px; }
+  code { color:#d0d0d5; }
 </style>
 </head>
 <body>
 <main>
   <div>
-    <div class="stage"><canvas id="c"></canvas><div class="hint" id="hint">Tryk "Start kamera"</div></div>
+    <div class="stage"><canvas id="c"></canvas><div class="hint" id="hint">Tryk på kortet</div></div>
     <div class="row">
-      <button class="primary" id="start">Start kamera</button>
-      <button id="restore">Genskab forklædning</button>
+      <button class="primary" id="restore">Genskab forklædning</button>
     </div>
     <div class="status" id="status"></div>
   </div>
   <div class="panel">
-    <h1>Digital Flap – demo på webcam</h1>
-    <p>Samme farveskift som i appen (Lab-farvemodel, overførsel forankret i papirhvidt, hudbeskyttelse), men uden appens maske-logik og lys-tilpasning. Hold et blåt kort op til kameraet: det vises rødt. Tryk på kortet for at afsløre. Vælg overgang og parametre her, før første IPA.</p>
+    <h1>Digital Flap demo med de ægte Rider Back-kort</h1>
+    <p>Det fysiske kort (her det blå Rider Back-billede på et bord) vises som det røde. Det røde er det ægte røde Rider Back-billede, lagt præcist oven på det blå mønster med samme homografi. Den yderste halvdel af den hvide kant er altid det fysiske kort. Tryk på kortet: det ægte kort kommer frem med en bølge fra fingeren. I appen findes kortets placering ved mønster-sporing i kamerabilledet.</p>
+    <label>Visning
+      <select id="view">
+        <option value="0">Effekt</option>
+        <option value="1">Kontrol: ternet (rød/blå felter)</option>
+        <option value="2">Kontrol: gardin (træk på kortet)</option>
+        <option value="3">Kontrol: blink</option>
+      </select></label>
     <label>Forklædning
       <select id="mode"><option value="b2r">Blå vises som rødt</option><option value="r2b">Rød vises som blåt</option></select></label>
     <label>Overgang
       <select id="kind"><option value="0">Bølge fra fingeren</option><option value="1">Øjeblikkeligt</option><option value="2">Fade</option><option value="3">Fej oppefra</option></select></label>
     <label>Varighed <span id="durV"></span><input id="dur" type="range" min="0.15" max="1.5" step="0.05" value="0.5"></label>
     <label>Kantblødhed <span id="softV"></span><input id="soft" type="range" min="0" max="1" step="0.05" value="0.4"></label>
-    <label>Følsomhed <span id="sensV"></span><input id="sens" type="range" min="0" max="1" step="0.05" value="0.5"></label>
-    <label>Spejl søgeren <input id="mirror" type="checkbox" checked></label>
-    <label>Vis maske <input id="showMask" type="checkbox"></label>
-    <div class="row">
-      <button id="learnRed">Lær rødt kort</button>
-      <button id="learnBlue">Lær blåt kort</button>
-      <button id="reset">Standardfarver</button>
-    </div>
-    <p id="pal"></p>
+    <label>Drejning <span id="rotV"></span><input id="rot" type="range" min="-40" max="40" step="1" value="-8"></label>
+    <label>Vipning <span id="tiltV"></span><input id="tilt" type="range" min="-0.3" max="0.3" step="0.01" value="0.08"></label>
+    <label>Størrelse <span id="sizeV"></span><input id="size" type="range" min="0.3" max="1.6" step="0.01" value="0.62"></label>
+    <label>Vis overlay-område <input id="showMask" type="checkbox"></label>
+    <p>Billederne er lavet af <code>scripts/prepare-cards.py</code> ud fra dine to referencer: blåt kort målt og rettet op, rødt kort registreret på mønstret (rest ca. 0,2 px), hvid baggrund fjernet, samme papirhvidt. Kontrol-visningerne viser rød og blå blandet, så du kan se, om linjerne flugter.</p>
   </div>
 </main>
 <script>
-"use strict";
-// --- Farvematematik (samme som Logic/ColorMath.swift) ---
-const lin = c => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
-function labOf(r, g, b) {
-  r = lin(r); g = lin(g); b = lin(b);
-  const x = 0.4124564*r + 0.3575761*g + 0.1804375*b, y = 0.2126729*r + 0.7151522*g + 0.0721750*b, z = 0.0193339*r + 0.1191920*g + 0.9503041*b;
-  const f = t => (t > 216/24389 ? Math.cbrt(t) : (24389/27*t + 16) / 116);
-  const fx = f(x/0.95047), fy = f(y), fz = f(z/1.08883);
-  return [116*fy - 16, 500*(fx - fy), 200*(fy - fz)];
-}
-const hex = h => labOf(parseInt(h.slice(1,3),16)/255, parseInt(h.slice(3,5),16)/255, parseInt(h.slice(5,7),16)/255);
-const DEF = { red: { mean: hex('#B3202A'), sl: 14 }, blue: { mean: hex('#1E3F8F'), sl: 14 } };
-const pal = { red: { ...DEF.red }, blue: { ...DEF.blue } };
+const $ = id => document.getElementById(id);
+const CARD_W = 1024, CARD_H = 1424;
+// Samme overlay-område som CardGeometry.overlay i appen (mønster + halv kant) – mønsterramme fra ios/Cards/rider.json
+const PAT = { minX: 82, minY: 73, maxX: 955, maxY: 1347 };
+const EDGE = 0.5 * Math.min(PAT.minX, PAT.minY);
+const OVERLAY = [PAT.minX - EDGE, PAT.minY - EDGE, PAT.maxX + EDGE, PAT.maxY + EDGE];
+const FEATHER = 0.25 * Math.min(PAT.minX, PAT.minY), ORAD = 0.5 * 57.73, CRAD = 57.73;
 
-// --- WebGL ---
-const canvas = document.getElementById('c');
-const gl = canvas.getContext('webgl', { preserveDrawingBuffer: true });
-const vs = `attribute vec2 p; varying vec2 uv; void main(){ uv = vec2((p.x+1.)*.5, 1.-(p.y+1.)*.5); gl_Position = vec4(p,0.,1.); }`;
-const common = `
-precision highp float;
-vec3 toLin(vec3 c){ return mix(pow((c+.055)/1.055, vec3(2.4)), c/12.92, step(c, vec3(.04045))); }
-vec3 toSRGB(vec3 c){ c = clamp(c,0.,1.); return mix(1.055*pow(c, vec3(1./2.4))-.055, c*12.92, step(c, vec3(.0031308))); }
-float fl(float t){ return t > 0.008856 ? pow(t, 1./3.) : (903.3*t+16.)/116.; }
-vec3 lab(vec3 c){ vec3 l = toLin(c);
-  float x = dot(l, vec3(.4124564,.3575761,.1804375))/.95047, y = dot(l, vec3(.2126729,.7151522,.072175)), z = dot(l, vec3(.0193339,.119192,.9503041))/1.08883;
-  float fx = fl(x), fy = fl(y), fz = fl(z); return vec3(116.*fy-16., 500.*(fx-fy), 200.*(fy-fz)); }
-float finv(float t){ float t3 = t*t*t; return t3 > 0.008856 ? t3 : (116.*t-16.)/903.3; }
-vec3 rgb(vec3 p){ float fy = (p.x+16.)/116., fx = fy + p.y/500., fz = fy - p.z/200.;
-  float x = .95047*finv(fx), y = finv(fy), z = 1.08883*finv(fz);
-  vec3 l = vec3(3.2404542*x-1.5371385*y-.4985314*z, -.969266*x+1.8760108*y+.041556*z, .0556434*x-.2040259*y+1.0572252*z);
-  return toSRGB(l); }
-uniform vec3 srcMean; uniform vec3 dstMean; uniform float sens; uniform float lscale; uniform float guardSkin;
-float angDiff(float a, float b){ float d = mod(a-b+3.14159265, 6.2831853) - 3.14159265; return abs(d); }
-float skinGuard(float h){ float lo = clamp(atan(srcMean.z, srcMean.y) + .192, .593, .873); float d = max(lo-h, h-1.396); return smoothstep(0., .087, d); }
-float score(vec3 p){
-  float cs = length(srcMean.yz), c = length(p.yz);
-  float hd = angDiff(atan(p.z, p.y), atan(srcMean.z, srcMean.y));
-  float sh = 1. - smoothstep(.31, .45, hd);
-  if (guardSkin > .5) sh *= skinGuard(atan(p.z, p.y));
-  float minC = max(6., .5*cs) * (1.15 - .3*sens);
-  float sc = smoothstep(minC*.75, minC*1.25, c);
-  float dl = (p.x - srcMean.x) / 30., dc = (c - cs) / max(8., .45*cs);
-  float d = sqrt(dl*dl + dc*dc), tau = 1.2 + 1.6*sens;
-  return sh * sc * (1. - smoothstep(tau-.4, tau+.4, d));
+const canvas = $('c');
+const gl = canvas.getContext('webgl', { antialias: true, premultipliedAlpha: false });
+
+const VS = `attribute vec2 p; varying vec2 uv; void main(){ uv = vec2((p.x+1.0)*0.5, 1.0-(p.y+1.0)*0.5); gl_Position = vec4(p,0,1); }`;
+const FS = `precision highp float;
+varying vec2 uv;
+uniform sampler2D phys, targ;
+uniform vec2 size;
+uniform mat3 hinv;
+uniform vec4 overlay;
+uniform float feather, orad, crad, view, kind, prog, radius, soft, sweepY, glow, showMask, curtain, blink, active;
+uniform vec2 center;
+float rr(vec2 q, vec4 r, float rad) {
+  vec2 c = (r.xy + r.zw) * 0.5; vec2 h = (r.zw - r.xy) * 0.5 - rad; vec2 d = abs(q - c) - h;
+  return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0) - rad;
 }
-vec3 transfer(vec3 c){
-  vec3 p = lab(c); float cs2 = dot(srcMean.yz, srcMean.yz);
-  float hd = angDiff(atan(p.z, p.y), atan(srcMean.z, srcMean.y));
-  float g = length(p.yz) < 1e-4 ? 0. : 1. - smoothstep(.14, .28, hd);
-  if (guardSkin > .5) g *= skinGuard(atan(p.z, p.y));
-  if (g <= 0.) return c;
-  float w = clamp(dot(p.yz, srcMean.yz)/cs2, 0., 1.5);
-  float s = length(dstMean.yz)/max(length(srcMean.yz), 1.), dh = atan(dstMean.z, dstMean.y) - atan(srcMean.z, srcMean.y);
-  vec2 ab = s * vec2(cos(dh)*p.y - sin(dh)*p.z, sin(dh)*p.y + cos(dh)*p.z);
-  float L = p.x + w*((dstMean.x - srcMean.x) + (lscale - 1.)*(p.x - srcMean.x));
-  vec3 q = vec3(p.x + g*(L-p.x), p.yz + g*(ab-p.yz));
-  return rgb(q);
-}`;
-const fsMask = common + `
-varying vec2 uv; uniform sampler2D cam; uniform float mirror;
-void main(){ vec2 u = uv; if (mirror > .5) u.x = 1.-u.x; gl_FragColor = vec4(vec3(score(lab(texture2D(cam, u).rgb))), 1.); }`;
-const fsOut = common + `
-varying vec2 uv; uniform sampler2D cam; uniform sampler2D mask; uniform float mirror; uniform float active;
-uniform float kind; uniform float progress; uniform float radius; uniform float soft; uniform float sweepY; uniform vec2 center;
-uniform vec2 size; uniform float glow; uniform float showMask;
-void main(){
-  vec2 u = uv; if (mirror > .5) u.x = 1.-u.x;
-  vec3 c = texture2D(cam, u).rgb;
-  float m = smoothstep(.15, .45, texture2D(mask, vec2(uv.x, 1.-uv.y)).r);
+void main() {
   vec2 p = uv * size;
-  if (active > .5 && m > .002) {
-    vec3 d = transfer(c);
-    float r = kind < .5 ? 1. - smoothstep(radius-soft, radius+soft, distance(p, center))
-            : kind < 2.5 ? progress : 1. - smoothstep(sweepY-soft, sweepY+soft, p.y);
-    vec3 o = mix(c, d, m*(1.-r));
-    if (kind < .5 && glow > 0.) { float dd = distance(p, center) - radius; o += m*glow*.12*exp(-dd*dd/max(1., .36*soft*soft)); }
-    c = o;
+  // bord (mørkt træ)
+  float g = 0.5 + 0.5 * sin(p.y * 0.05 + sin(p.x * 0.012) * 3.0);
+  vec3 col = mix(vec3(0.20, 0.12, 0.07), vec3(0.30, 0.19, 0.11), g) * (1.0 - 0.35 * length(uv - 0.5));
+  vec3 q3 = hinv * vec3(p, 1.0);
+  vec2 cu = q3.xy / q3.z;
+  vec2 tc = cu / vec2(${CARD_W}.0, ${CARD_H}.0);
+  vec4 a = texture2D(phys, tc), b = texture2D(targ, tc);
+  float inCard = q3.z > 0.0 ? clamp(0.5 - rr(cu, vec4(0.0, 0.0, ${CARD_W}.0, ${CARD_H}.0), crad) * 0.5, 0.0, 1.0) * a.a : 0.0;
+  // skygge under kortet
+  float sh = q3.z > 0.0 ? smoothstep(60.0, -10.0, rr(cu - vec2(-14.0, 22.0), vec4(0.0, 0.0, ${CARD_W}.0, ${CARD_H}.0), crad)) : 0.0;
+  col *= 1.0 - 0.45 * sh * (1.0 - inCard);
+  vec3 c = mix(col, a.rgb, inCard);
+  float region = q3.z > 0.0 ? 1.0 - smoothstep(-feather, 0.0, rr(cu, overlay, orad)) : 0.0;
+  if (view < 0.5) {
+    float r;
+    if (kind < 0.5) r = 1.0 - smoothstep(radius - soft, radius + soft, distance(p, center));
+    else if (kind < 2.5) r = prog;
+    else r = 1.0 - smoothstep(sweepY - soft, sweepY + soft, p.y);
+    float k = region * active * (1.0 - r);
+    c = mix(c, b.rgb, k);
+    if (glow > 0.0 && kind < 0.5) { float dd = distance(p, center) - radius; float w = max(1.0, 0.6 * soft); c += region * active * glow * 0.12 * exp(-(dd*dd)/(w*w)); }
+    if (showMask > 0.5) c = mix(c, vec3(1.0, 0.0, 1.0), 0.3 * region * active);
+  } else if (view < 1.5) {
+    float t = mod(floor(cu.x / 64.0) + floor(cu.y / 64.0), 2.0);
+    c = mix(c, b.rgb, inCard * t);
+  } else if (view < 2.5) {
+    c = mix(c, b.rgb, inCard * step(cu.x, curtain));
+    float line = 1.0 - smoothstep(0.0, 3.0, abs(cu.x - curtain));
+    c = mix(c, vec3(1.0, 1.0, 0.3), line * inCard * 0.8);
+  } else {
+    c = mix(c, b.rgb, inCard * blink);
   }
-  if (showMask > .5) c = mix(c, vec3(1.,0.,1.), .35*m);
-  gl_FragColor = vec4(c, 1.);
+  gl_FragColor = vec4(c, 1.0);
 }`;
-function prog(fs) {
-  const p = gl.createProgram();
-  for (const [t, s] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]]) {
-    const sh = gl.createShader(t); gl.shaderSource(sh, s); gl.compileShader(sh);
-    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
-    gl.attachShader(p, sh);
-  }
-  gl.linkProgram(p); return p;
-}
-const pMask = prog(fsMask), pOut = prog(fsOut);
+
+function sh(type, src) { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
+const prog = gl.createProgram();
+gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS)); gl.linkProgram(prog);
+gl.useProgram(prog);
 const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
-function tex() { const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
-  for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
-  return t; }
-const camTex = tex(), maskTex = tex();
-const MW = 90, MH = 120;
-gl.bindTexture(gl.TEXTURE_2D, maskTex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, MW, MH, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-const fbo = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, maskTex, 0); gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-const maskPixels = new Uint8Array(MW * MH * 4);
+const loc = gl.getAttribLocation(prog, 'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+const U = n => gl.getUniformLocation(prog, n);
 
-// --- Tilstand ---
-const $ = id => document.getElementById(id);
-const video = document.createElement('video'); video.playsInline = true; video.muted = true;
-let running = false, plan = null, revealed = false;
-function source() { return $('mode').value === 'b2r' ? pal.blue : pal.red; }
-function target() { return $('mode').value === 'b2r' ? pal.red : pal.blue; }
-const ease = t => (t < .5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2);
+const tex = {};
+function load(name) {
+  return new Promise(res => { const im = new Image(); im.onload = () => {
+    const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, im);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    tex[name] = t; res(); }; im.src = 'rider-' + name + '.png'; });
+}
 
-function setU(p, name, v) { const l = gl.getUniformLocation(p, name); if (l === null) return;
-  if (Array.isArray(v)) (v.length === 2 ? gl.uniform2fv : gl.uniform3fv).call(gl, l, v); else gl.uniform1f(l, v); }
-function common_u(p) {
-  const s = source(), t = target();
-  setU(p, 'srcMean', s.mean); setU(p, 'dstMean', t.mean); setU(p, 'sens', +$('sens').value);
-  setU(p, 'lscale', Math.min(1.4, Math.max(.7, t.sl / s.sl)));
-  const hs = Math.atan2(s.mean[2], s.mean[1]) * 180 / Math.PI; setU(p, 'guardSkin', (hs < 38 || hs > 85) ? 1 : 0);
+// Homografi fra 4 punkter (Gauss-elimination, som Homography.from i appen)
+function homography(src, dst) {
+  const A = [], b = [];
+  for (let i = 0; i < 4; i++) { const [x, y] = src[i], [u, v] = dst[i];
+    A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); b.push(u);
+    A.push([0, 0, 0, x, y, 1, -v * x, -v * y]); b.push(v); }
+  for (let c = 0; c < 8; c++) { let p = c; for (let r = c + 1; r < 8; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+    [A[c], A[p]] = [A[p], A[c]]; [b[c], b[p]] = [b[p], b[c]];
+    for (let r = c + 1; r < 8; r++) { const f = A[r][c] / A[c][c]; for (let k = c; k < 8; k++) A[r][k] -= f * A[c][k]; b[r] -= f * b[c]; } }
+  const h = new Array(8);
+  for (let c = 7; c >= 0; c--) { let s = b[c]; for (let k = c + 1; k < 8; k++) s -= A[c][k] * h[k]; h[c] = s / A[c][c]; }
+  return [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], 1];
 }
-function draw(p, w, h) {
-  gl.viewport(0, 0, w, h); gl.useProgram(p);
-  const loc = gl.getAttribLocation(p, 'p'); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-  gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+function invert(m) {
+  const [a, b, c, d, e, f, g, h, i] = m;
+  const A = e * i - f * h, B = f * g - d * i, C = d * h - e * g, det = a * A + b * B + c * C;
+  return [A, c * h - b * i, b * f - c * e, B, a * i - c * g, c * d - a * f, C, b * g - a * h, a * e - b * d].map(v => v / det);
 }
+function apply(m, x, y) { const w = m[6] * x + m[7] * y + m[8]; return [(m[0] * x + m[1] * y + m[2]) / w, (m[3] * x + m[4] * y + m[5]) / w]; }
+
+let W = 0, H = 0, Hc = null, Hinv = null, cardBox = null;
+function layout() {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  W = Math.round(canvas.clientWidth * dpr); H = Math.round(canvas.clientHeight * dpr);
+  canvas.width = W; canvas.height = H; gl.viewport(0, 0, W, H);
+  const rot = +$('rot').value * Math.PI / 180, tilt = +$('tilt').value, s = +$('size').value;
+  const cw = W * s, ch = cw * CARD_H / CARD_W, cx = W / 2 + pan[0], cy = H / 2 + pan[1];
+  const pts = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]].map(([u, v]) => {
+    const k = 1 + tilt * v * 2; const x = u * cw * k, y = v * ch * k;
+    return [cx + x * Math.cos(rot) - y * Math.sin(rot), cy + x * Math.sin(rot) + y * Math.cos(rot)]; });
+  Hc = homography([[0, 0], [CARD_W, 0], [CARD_W, CARD_H], [0, CARD_H]], pts);
+  Hinv = invert(Hc);
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  cardBox = { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
+  ['rot', 'tilt', 'size', 'dur', 'soft'].forEach(id => $(id + 'V').textContent = $(id).value);
+}
+let pan = [0, 0];
+
+// Afsløring (samme formler som RevealPlan i appen)
+let plan = null, revealed = false;
+const ease = t => { const x = Math.min(1, Math.max(0, t)); return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
+function reveal(px, py) {
+  const kind = +$('kind').value, dur = Math.max(0.05, +$('dur').value), soft = (4 + 56 * +$('soft').value) * W / 1080;
+  const far = Math.max(...[[cardBox.minX, cardBox.minY], [cardBox.maxX, cardBox.minY], [cardBox.minX, cardBox.maxY], [cardBox.maxX, cardBox.maxY]]
+    .map(([x, y]) => Math.hypot(x - px, y - py)));
+  plan = { kind, dur, soft, start: performance.now() / 1000, cx: px, cy: py, maxR: far, top: cardBox.minY, bottom: cardBox.maxY };
+}
+
+let curtain = CARD_W / 2, dragging = false;
+function cardPoint(e) {
+  const r = canvas.getBoundingClientRect();
+  const x = (e.clientX - r.left) / r.width * W, y = (e.clientY - r.top) / r.height * H;
+  const [u, v] = apply(Hinv, x, y);
+  return { x, y, u, v, inside: u > -40 && v > -40 && u < CARD_W + 40 && v < CARD_H + 40 };
+}
+canvas.addEventListener('pointerdown', e => {
+  const p = cardPoint(e);
+  if (+$('view').value === 2) { dragging = true; curtain = p.u; return; }
+  if (p.inside && !revealed && !plan && +$('view').value === 0) reveal(p.x, p.y);
+});
+canvas.addEventListener('pointermove', e => { if (dragging) curtain = cardPoint(e).u; });
+window.addEventListener('pointerup', () => dragging = false);
+$('restore').onclick = () => { plan = null; revealed = false; };
+['rot', 'tilt', 'size'].forEach(id => $(id).oninput = () => { plan = null; layout(); });
+['dur', 'soft'].forEach(id => $(id).oninput = layout);
+$('mode').onchange = () => { plan = null; revealed = false; };
+window.addEventListener('resize', layout);
+
 function frame() {
-  if (!running) return;
-  const W = canvas.width = canvas.clientWidth * devicePixelRatio, H = canvas.height = canvas.clientHeight * devicePixelRatio;
-  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, camTex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
-  // 1) maske i lav opløsning
-  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo); gl.useProgram(pMask); common_u(pMask);
-  setU(pMask, 'mirror', $('mirror').checked ? 1 : 0); gl.uniform1i(gl.getUniformLocation(pMask, 'cam'), 0);
-  draw(pMask, MW, MH); gl.readPixels(0, 0, MW, MH, gl.RGBA, gl.UNSIGNED_BYTE, maskPixels);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  // 2) visning
-  gl.useProgram(pOut); common_u(pOut);
-  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, maskTex);
-  gl.uniform1i(gl.getUniformLocation(pOut, 'cam'), 0); gl.uniform1i(gl.getUniformLocation(pOut, 'mask'), 1);
-  setU(pOut, 'mirror', $('mirror').checked ? 1 : 0); setU(pOut, 'showMask', $('showMask').checked ? 1 : 0);
-  setU(pOut, 'size', [W, H]);
   const now = performance.now() / 1000;
-  let active = !revealed, kind = 2, progress = 0, radius = 0, sweepY = 0, glow = 0, center = [0, 0], soft = (4 + 56 * +$('soft').value) * W / 1080;
+  const b2r = $('mode').value === 'b2r';
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, b2r ? tex.blue : tex.red);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, b2r ? tex.red : tex.blue);
+  gl.uniform1i(U('phys'), 0); gl.uniform1i(U('targ'), 1);
+  gl.uniform2f(U('size'), W, H);
+  // mat3 i GLSL er kolonnevis
+  gl.uniformMatrix3fv(U('hinv'), false, new Float32Array([Hinv[0], Hinv[3], Hinv[6], Hinv[1], Hinv[4], Hinv[7], Hinv[2], Hinv[5], Hinv[8]]));
+  gl.uniform4f(U('overlay'), ...OVERLAY);
+  gl.uniform1f(U('feather'), FEATHER); gl.uniform1f(U('orad'), ORAD); gl.uniform1f(U('crad'), CRAD);
+  gl.uniform1f(U('view'), +$('view').value);
+  gl.uniform1f(U('showMask'), $('showMask').checked ? 1 : 0);
+  gl.uniform1f(U('curtain'), curtain);
+  gl.uniform1f(U('blink'), Math.floor(now * 2) % 2);
+  let kind = 2, prog = 0, radius = 0, soft = 1, sweepY = 0, glow = 0, cx = 0, cy = 0;
   if (plan) {
-    const lt = Math.min(1, (now - plan.start) / plan.dur), pr = plan.kind === 1 ? 1 : ease(lt);
-    kind = plan.kind; progress = pr; center = plan.center;
-    radius = pr * (plan.maxR + 2 * soft) - soft; sweepY = plan.top - soft + pr * (plan.bottom - plan.top + 2 * soft);
-    glow = plan.kind === 0 ? 1 - lt : 0; active = true;
-    if (lt >= 1 || plan.kind === 1) { plan = null; revealed = true; }
+    const lin = Math.min(1, Math.max(0, (now - plan.start) / plan.dur));
+    kind = plan.kind; soft = plan.soft; cx = plan.cx; cy = plan.cy;
+    prog = kind === 1 ? 1 : ease(lin);
+    radius = prog * (plan.maxR + 2 * soft) - soft;
+    sweepY = plan.top - soft + prog * (plan.bottom - plan.top + 2 * soft);
+    glow = kind === 0 ? 1 - lin : 0;
+    if (lin >= 1 || kind === 1) { plan = null; revealed = true; }
   }
-  setU(pOut, 'active', active ? 1 : 0); setU(pOut, 'kind', kind); setU(pOut, 'progress', progress); setU(pOut, 'radius', radius);
-  setU(pOut, 'soft', soft); setU(pOut, 'sweepY', sweepY); setU(pOut, 'center', center); setU(pOut, 'glow', glow);
-  draw(pOut, W, H);
-  $('status').textContent = revealed ? 'AFSLØRET – tryk "Genskab"' : (coverage() > 0.01 ? 'KLAR – tryk på kortet' : 'INTET KORT');
+  gl.uniform1f(U('kind'), kind); gl.uniform1f(U('prog'), prog); gl.uniform1f(U('radius'), radius);
+  gl.uniform1f(U('soft'), soft); gl.uniform1f(U('sweepY'), sweepY); gl.uniform1f(U('glow'), glow);
+  gl.uniform2f(U('center'), cx, cy);
+  gl.uniform1f(U('active'), revealed ? 0 : 1);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  const v = +$('view').value;
+  $('status').textContent = v ? '' : (revealed ? 'Afsløret – tryk "Genskab forklædning"' : (plan ? 'Afslører …' : 'Forklædt'));
+  $('hint').textContent = v === 2 ? 'Træk på kortet for at flytte gardinet' : (v ? '' : 'Tryk på kortet');
   requestAnimationFrame(frame);
 }
-// readPixels-rækkefølge: række 0 = nederst i FBO = uv.y 1 (vi tegnede uv med y nedad) → række 0 = top af billedet? Vi bruger blot samme konvention begge veje.
-function maskAt(x, y) { const i = (Math.min(MH-1, Math.max(0, Math.floor((1 - y) * MH))) * MW + Math.min(MW-1, Math.max(0, Math.floor(x * MW)))) * 4; return maskPixels[i] / 255; }
-function coverage() { let n = 0; for (let i = 0; i < maskPixels.length; i += 4) if (maskPixels[i] > 110) n++; return n / (MW * MH); }
-function cardBox() { let x0 = 1, y0 = 1, x1 = 0, y1 = 0, n = 0;
-  for (let j = 0; j < MH; j++) for (let i = 0; i < MW; i++) if (maskPixels[(j*MW+i)*4] > 110) { const x = i/MW, y = 1 - j/MH; x0 = Math.min(x0,x); x1 = Math.max(x1,x); y0 = Math.min(y0,y); y1 = Math.max(y1,y); n++; }
-  return n ? [x0, y0, x1, y1] : null; }
-
-canvas.addEventListener('pointerdown', e => {
-  if (!running || revealed || plan) return;
-  const r = canvas.getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
-  let hit = 0, tot = 0; const rad = 40 / r.width;
-  for (let dy = -rad; dy <= rad; dy += rad / 4) for (let dx = -rad; dx <= rad; dx += rad / 4) if (dx*dx + dy*dy <= rad*rad) { tot++; if (maskAt(x+dx, y+dy*r.width/r.height) > .43) hit++; }
-  if (hit / tot < .3) return;
-  const W = canvas.width, H = canvas.height, b = cardBox() || [0, 0, 1, 1];
-  const c = [x * W, y * H];
-  const corners = [[b[0],b[1]],[b[2],b[1]],[b[0],b[3]],[b[2],b[3]]].map(([u,v]) => Math.hypot(u*W - c[0], v*H - c[1]));
-  plan = { kind: +$('kind').value, start: performance.now() / 1000, dur: +$('dur').value, center: c, maxR: Math.max(...corners), top: b[1]*H, bottom: b[3]*H };
-});
-$('restore').onclick = () => { revealed = false; plan = null; };
-$('start').onclick = async () => {
-  try {
-    const s = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 960 }, facingMode: 'user' }, audio: false });
-    video.srcObject = s; await video.play(); running = true; $('hint').textContent = ''; $('start').textContent = 'Kamera kører'; requestAnimationFrame(frame);
-  } catch (e) { $('hint').textContent = 'Ingen adgang til kamera: ' + e.message; }
-};
-// "Lær kort": middelfarve af de farvede pixels midt i billedet (som PaletteLearner, forenklet)
-function learn(which) {
-  if (!running) return;
-  const cv = document.createElement('canvas'), w = 160, h = 120; cv.width = w; cv.height = h;
-  const ctx = cv.getContext('2d'); ctx.drawImage(video, 0, 0, w, h); const d = ctx.getImageData(0, 0, w, h).data;
-  let s = [0,0,0], n = 0, ll = 0;
-  for (let y = h*.15|0; y < h*.85; y++) for (let x = w*.15|0; x < w*.85; x++) { const i = (y*w+x)*4; const p = labOf(d[i]/255, d[i+1]/255, d[i+2]/255);
-    if (Math.hypot(p[1], p[2]) < 10) continue; s[0]+=p[0]; s[1]+=p[1]; s[2]+=p[2]; ll += p[0]*p[0]; n++; }
-  if (n < 200) { $('pal').textContent = 'Intet farvet kort fundet – hold kortet midt for kameraet.'; return; }
-  const mean = s.map(v => v / n), sl = Math.sqrt(Math.max(1, ll / n - mean[0]*mean[0]));
-  pal[which] = { mean, sl }; showPal();
-}
-function showPal() {
-  const f = (k, n) => `<span class="swatch" style="background:${n}"></span>${k}: L ${pal[k].mean[0].toFixed(0)}, a ${pal[k].mean[1].toFixed(0)}, b ${pal[k].mean[2].toFixed(0)}`;
-  $('pal').innerHTML = f('red', '#B3202A') + '<br>' + f('blue', '#1E3F8F');
-}
-$('learnRed').onclick = () => learn('red'); $('learnBlue').onclick = () => learn('blue');
-$('reset').onclick = () => { pal.red = { ...DEF.red }; pal.blue = { ...DEF.blue }; showPal(); };
-for (const [id, out, fmt] of [['dur','durV', v => v + ' s'], ['soft','softV', v => Math.round(v*100) + ' %'], ['sens','sensV', v => Math.round(v*100) + ' %']]) {
-  const upd = () => $(out).textContent = fmt($(id).value); $(id).oninput = upd; upd();
-}
-showPal();
+Promise.all([load('blue'), load('red')]).then(() => { layout(); frame(); });
 </script>
 </body>
 </html>

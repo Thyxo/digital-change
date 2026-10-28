@@ -14,7 +14,7 @@ struct SecretPanel: View {
                 statusSection
                 effectSection
                 restoreSection
-                calibrationSection
+                cardSection
                 realismSection
                 logSection
                 Section {
@@ -95,7 +95,7 @@ struct SecretPanel: View {
             slider("Kantblødhed", value: $s.softness, range: 0...1, text: "\(Int(s.softness * 100)) %")
             Button("Test afsløring") { engine.testReveal() }
         } header: { Text("Effekt") } footer: {
-            Text("Blå vises som rødt: det blå kort, kameraet ser, vises som et rødt kort. Et tryk på kortet (mindst 30 % af området under fingeren er kort) slukker forklædningen med den valgte overgang. Tryk ved siden af giver kun fokusfirkant.")
+            Text("Blå vises som rødt: det blå Rider Back-kort, kameraet ser, vises som det røde. Et tryk på kortet slukker forklædningen med den valgte overgang. Tryk ved siden af giver kun fokusfirkant.")
         }
     }
 
@@ -142,42 +142,22 @@ struct SecretPanel: View {
         Toggle(title, isOn: Binding(get: { s.has(m) }, set: { s.set(m, $0) }))
     }
 
-    // MARK: Kalibrering
+    // MARK: Kort og sporing
 
-    private var calibrationSection: some View {
+    private var cardSection: some View {
         Section {
-            Text("1. Lær rødt kort: hold et kort fra det røde spil 2–5 cm over kameraet i 3 sek.\n2. Lær blåt kort: samme med det blå kort.\n3. Lær baggrund: vis hånden og rummet uden kort i 3 sek.")
-                .font(.footnote)
-            learnButton(.red, "Lær rødt kort", done: s.redPalette != nil)
-            learnButton(.blue, "Lær blåt kort", done: s.bluePalette != nil)
-            learnButton(.background, "Lær baggrund (uden kort)", done: s.background != nil)
-            if let m = engine.learnMessage {
-                Text(m).font(.footnote).foregroundStyle(.secondary)
-            }
-            slider("Følsomhed", value: $s.sensitivity, range: 0...1, text: "\(Int(s.sensitivity * 100)) %")
-            Toggle("Geometri (Vision-firkant)", isOn: $s.geometry)
+            slider("Fingerfølsomhed", value: $s.occlusionSensitivity, range: 0...1, text: "\(Int(s.occlusionSensitivity * 100)) %")
+            slider("Uskarphed på kortet", value: $s.blur, range: 0...1, text: "\(Int(s.blur * 100)) %")
+            slider("Korn", value: $s.grain, range: 0...1, text: "\(Int(s.grain * 100)) %")
             Toggle("Lås eksponering og hvidbalance", isOn: $s.lockExposure)
-            Toggle("Vis maske", isOn: $s.showMask)
+            Toggle("Vis sporing", isOn: $s.showMask)
             Button("Nulstil til standard", role: .destructive) { confirmReset = true }
-                .confirmationDialog("Nulstil effekt og kalibrering?", isPresented: $confirmReset) {
+                .confirmationDialog("Nulstil effekt og sporing?", isPresented: $confirmReset) {
                     Button("Nulstil", role: .destructive) { s.resetToDefaults() }
                 }
-        } header: { Text("Kalibrering") } footer: {
-            Text("Uden kalibrering bruges rød #B3202A og blå #1E3F8F. Lær kortene i det lys, du optræder i. Følsomhed: højere = flere pixels regnes for kort.")
+        } header: { Text("Kort og sporing") } footer: {
+            Text("Kun Bicycle Rider Back (rød og blå). Appen kender begge bagsider og lægger det ægte målkort præcist over mønstret på det kort, kameraet ser – ingen kalibrering. Hold hele kortet i billedet, til det er fundet; derefter følges det, også delvist uden for billedet. Den yderste del af den hvide kant er altid kameraets eget kort. Fingerfølsomhed: højere = fingre over kortet findes lettere (for højt kan give huller i kortet).")
         }
-    }
-
-    private func learnButton(_ kind: LearnKind, _ title: String, done: Bool) -> some View {
-        Button {
-            engine.learn(kind)
-        } label: {
-            HStack {
-                Text(engine.learning == kind ? "Måler … hold stille" : title)
-                Spacer()
-                if engine.learning == kind { ProgressView() } else if done { Image(systemName: "checkmark").foregroundStyle(.green) }
-            }
-        }
-        .disabled(engine.learning != nil)
     }
 
     // MARK: Kamera-realisme
@@ -208,7 +188,7 @@ struct SecretPanel: View {
                     Text(e.text).font(.caption)
                 }
             }
-            Button(engine.selfTestProgress != nil ? "Selvtest kører …" : "Kør selvtest (5.000 billeder)") { engine.runSelfTest() }
+            Button(engine.selfTestProgress != nil ? "Selvtest kører …" : "Kør selvtest (300 billeder)") { engine.runSelfTest() }
                 .disabled(engine.selfTestProgress != nil)
             if let p = engine.selfTestProgress { ProgressView(value: p) }
             ForEach(engine.selfTestLines, id: \.self) { Text($0).font(.caption.monospacedDigit()) }
@@ -216,7 +196,7 @@ struct SecretPanel: View {
     }
 }
 
-/// Statusmærke, forhåndsvisning med maske, fps og maske-procent (opdateres alene, ca. 5 gange i sekundet).
+/// Statusmærke, forhåndsvisning med sporing, fps og match (opdateres alene, ca. 5 gange i sekundet).
 struct LiveStatus: View {
     @ObservedObject var readout: LiveReadout
 
@@ -226,7 +206,6 @@ struct LiveStatus: View {
             case .ready: return ("KLAR", .green)
             case .off: return ("FRA", .gray)
             case .noCard: return ("INTET KORT", .orange)
-            case .calibrating: return ("KALIBRERER", .blue)
             case .revealed: return ("AFSLØRET – genskab for at bruge igen", .yellow)
             }
         }()
@@ -242,8 +221,8 @@ struct LiveStatus: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(b.0).font(.headline).foregroundStyle(b.1).accessibilityIdentifier("statusBadge")
                 Text(String(format: "%.0f fps", readout.fps)).monospacedDigit()
-                Text(String(format: "Maske %.1f %%", readout.maskPercent)).monospacedDigit()
-                Text(String(format: "Skærmlys k %.2f", readout.light)).monospacedDigit().font(.caption).foregroundStyle(.secondary)
+                Text(String(format: "Match %.0f %% · dækket %.0f %%", readout.score, readout.occluded)).monospacedDigit()
+                Text(String(format: "%.1f ms pr. billede", readout.ms)).monospacedDigit().font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
         }

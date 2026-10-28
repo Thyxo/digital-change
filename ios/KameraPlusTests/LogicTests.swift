@@ -331,16 +331,16 @@ final class MotionAndGeometryTests: XCTestCase {
 }
 
 final class SelfTestTests: XCTestCase {
-    func testRandomizedSelfTest5000() {
-        let r = SelfTest.run(count: 5000, seed: 2026)
+    func testRandomizedSelfTestBlue() throws {
+        let r = SelfTest.run(templates: try Fixtures.templates(), source: .blue, count: 600, seed: 2026)
         r.lines.forEach { print("Selvtest:", $0) }
         r.notes.prefix(25).forEach { print("  note:", $0) }
         XCTAssertTrue(r.passed, r.lines.joined(separator: "\n"))
     }
 
-    func testRandomizedSelfTestReverse() {
-        let r = SelfTest.run(count: 1500, seed: 77, reverse: true)
-        r.lines.forEach { print("Selvtest (omvendt):", $0) }
+    func testRandomizedSelfTestRed() throws {
+        let r = SelfTest.run(templates: try Fixtures.templates(), source: .red, count: 300, seed: 77)
+        r.lines.forEach { print("Selvtest (rød):", $0) }
         r.notes.prefix(25).forEach { print("  note:", $0) }
         XCTAssertTrue(r.passed, r.lines.joined(separator: "\n"))
     }
