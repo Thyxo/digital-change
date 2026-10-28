@@ -187,6 +187,8 @@ final class SyntheticSource: FrameSource, @unchecked Sendable {
     /// Kortet i testvideoen (det fysiske kort, kameraet "ser").
     var template: CardTemplate?
 
+    /// Tegnes i halv opløsning og forstørres ×2 (billigt nok til at simulatoren i CI ikke bliver træg).
+    static let renderWidth = 270, renderHeight = 360
     static let width = 540, height = 720
 
     func start() {
@@ -210,7 +212,7 @@ final class SyntheticSource: FrameSource, @unchecked Sendable {
         guard let sink else { return }
         let time = CACurrentMediaTime() - t0
         frame += 1
-        var s = SynthScene(width: SyntheticSource.width, height: SyntheticSource.height)
+        var s = SynthScene(width: SyntheticSource.renderWidth, height: SyntheticSource.renderHeight)
         s.backdrop = .ceiling
         s.backdropColor = RGB8(214, 214, 210)
         s.noise = 1.5
@@ -223,7 +225,7 @@ final class SyntheticSource: FrameSource, @unchecked Sendable {
                                      width: cw, angle: 0.25 * sin(time * 0.4), tiltY: 0.08 * sin(time * 0.9))
             s.card = c
             let q = c.quad
-            (sink as? Pipeline)?.syntheticHint = q
+            (sink as? Pipeline)?.syntheticHint = Quad(corners: q.corners.map { $0 * 2 })
             let a = q.corners[3], b = q.corners[0]
             s.fingers = [Finger(center: Point2((a.x + b.x) / 2, (a.y + b.y) / 2), rx: cw * 0.1, ry: cw * 0.26,
                                 angle: atan2(b.y - a.y, b.x - a.x) + .pi / 2, color: Synth.skinTones[2])]
@@ -239,7 +241,7 @@ final class SyntheticSource: FrameSource, @unchecked Sendable {
                 for y in 0..<SyntheticSource.height {
                     let row = dst + y * bpr
                     for x in 0..<SyntheticSource.width {
-                        let si = (y * SyntheticSource.width + x) * 4
+                        let si = ((y / 2) * SyntheticSource.renderWidth + x / 2) * 4
                         row[x * 4] = src[si + 2]
                         row[x * 4 + 1] = src[si + 1]
                         row[x * 4 + 2] = src[si]
