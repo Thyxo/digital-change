@@ -34,7 +34,9 @@ struct SecretPanel: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Færdig") {
                         // Første sekund ignoreres, så et ekstra hemmeligt tryk ikke lukker menuen.
-                        if Date().timeIntervalSince(openedAt) > 1 { engine.panelOpen = false }
+                        // (UI-testen kan forlænge tiden med startargumentet -doneDelay.)
+                        let delay = max(1, UserDefaults.standard.double(forKey: "doneDelay"))
+                        if Date().timeIntervalSince(openedAt) > delay { engine.panelOpen = false }
                     }
                     .accessibilityIdentifier("doneButton")
                 }

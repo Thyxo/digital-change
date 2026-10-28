@@ -66,9 +66,9 @@ struct PipelineSummary {
 
 @MainActor
 protocol PipelineDelegate: AnyObject {
-    func pipeline(summary: PipelineSummary)
-    func pipelineShake()
-    func pipeline(preview: CGImage)
+    func pipelineDidAnalyze(_ summary: PipelineSummary)
+    func pipelineDidShake()
+    func pipelineDidPreview(_ preview: CGImage)
 }
 
 /// Alt arbejde pr. kamerabillede, på én seriel kø: nedskalering til ca. 270 px bredde, farvemaske,
@@ -191,7 +191,7 @@ final class Pipeline: FrameSink, @unchecked Sendable {
             let center = result.quad.map { $0.centroid * f } ?? c * f
             let corners = result.quad?.corners.map { $0 * f }
             if shake.push(CardTrackSample(t: now, center: center, corners: corners, cardWidth: cw, phoneStill: motion.phoneStill)) {
-                DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.delegate?.pipelineShake() } }
+                DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.delegate?.pipelineDidShake() } }
             }
             shakeMeter = shake.meter
         } else {
@@ -215,10 +215,10 @@ final class Pipeline: FrameSink, @unchecked Sendable {
         }
         let summary = PipelineSummary(time: now, cardVisible: out.cardVisible, analyzed: analyzed, coverage: out.coverage,
                                       fps: fps, k: analyzer?.k ?? 0, shake: shakeMeter)
-        DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.delegate?.pipeline(summary: summary) } }
+        DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.delegate?.pipelineDidAnalyze(summary) } }
 
         if cfg.wantPreview && serial % 4 == 0, let img = Pipeline.preview(lowres, mask: analyzed ? result.mask : []) {
-            DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.delegate?.pipeline(preview: img) } }
+            DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.delegate?.pipelineDidPreview(img) } }
         }
     }
 

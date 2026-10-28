@@ -53,11 +53,17 @@ final class SecretMenuUITests: XCTestCase {
         XCTAssertFalse(done.waitForExistence(timeout: 2), "Tryk øverst til højre åbnede menuen")
     }
 
+    /// Simulatoren er for langsom til at ramme det første sekund pålideligt, så testen forlænger
+    /// spærretiden til 4 sek. med -doneDelay (samme kode som de 1 sek. i appen).
     func testDoneIgnoredFirstSecond() {
+        app.terminate()
+        app.launchArguments += ["-doneDelay", "4"]
+        app.launch()
+        _ = app.buttons["shutter"].waitForExistence(timeout: 10)
         openMenu()
         done.tap()
-        XCTAssertTrue(done.waitForExistence(timeout: 1), "Færdig lukkede menuen i første sekund")
-        sleep(1)
+        XCTAssertTrue(done.waitForExistence(timeout: 1), "Færdig lukkede menuen i spærretiden")
+        sleep(4)
         done.tap()
         let gone = NSPredicate(format: "exists == false")
         expectation(for: gone, evaluatedWith: done)

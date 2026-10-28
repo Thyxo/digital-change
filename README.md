@@ -16,7 +16,9 @@ SideStore → **Sources** → **+** → indsæt URL → KameraPlus → **Install
 
 Første start: giv adgang til kameraet. "Gem i Fotos" spørger først, når du slår det til.
 
-**Branches:** push til `dev` = test + build (ingen release). Push til `main` = release + ny SideStore-version.
+**Branches:** push til `dev` = test + build (ingen release). Push til `main` = release + ny SideStore-version. CI bruger kun `git` og `gh` (repoets Actions-politik tillader kun handlinger ejet af Thyxo).
+
+**Demo på computeren:** https://digital-flap-demo.vercel.app (WebGL + webcam, `demo/index.html`). Samme farveskift og overgange, så du kan vælge udseende og parametre. Vercel-projektet *digital-flap-demo* udgiver mappen `demo/` ved hvert push til produktions-branchen.
 
 **Før første optræden (3 trin i menuen → Kalibrering):**
 1. **Lær rødt kort** – hold et kort fra det røde spil 2–5 cm over kameraet i 3 sek.

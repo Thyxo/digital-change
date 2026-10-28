@@ -47,8 +47,9 @@ jobs:
           UDID=$(xcrun simctl list devices available -j | python3 -c "
           import json,sys
           d=json.load(sys.stdin)['devices']
-          c=[(r,x) for r,v in d.items() if 'iOS' in r for x in v if x['name'].startswith('iPhone')]
-          c.sort(key=lambda t:(int(t[0].split('iOS-')[1].split('-')[0]), t[1]['name']))
+          c=[(r,x) for r,v in d.items() if 'iOS' in r for x in v if x['name'].startswith('iPhone') and 'SE' not in x['name']]
+          pref=['iPhone 17 Pro','iPhone 16 Pro','iPhone 17','iPhone 16','iPhone 15 Pro','iPhone 15']
+          c.sort(key=lambda t:(int(t[0].split('iOS-')[1].split('-')[0]), -(pref.index(t[1]['name']) if t[1]['name'] in pref else 99)))
           print(c[-1][1]['udid']); print(c[-1][0], c[-1][1]['name'], file=sys.stderr)")
           rc=0
           xcodebuild test -project KameraPlus.xcodeproj -scheme KameraPlus -destination "id=$UDID" \

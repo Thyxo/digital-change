@@ -67,7 +67,7 @@ final class Engine: ObservableObject, PipelineDelegate {
     let readout = LiveReadout()
 
     let settings: AppSettings
-    let pipeline = Pipeline()
+    let pipeline: Pipeline
     let renderer: Renderer
     let store = PhotoStore()
     let haptics = Haptics()
@@ -79,6 +79,7 @@ final class Engine: ObservableObject, PipelineDelegate {
     private var source: FrameSource?
     private var bag = Set<AnyCancellable>()
     private var started = false
+    private var wasInBackground = false
     private var cardVisible = false
     private var lastReadout = 0.0
     private var lastShutterTap = Date.distantPast
@@ -96,7 +97,9 @@ final class Engine: ObservableObject, PipelineDelegate {
 
     init(settings: AppSettings) {
         self.settings = settings
-        renderer = Renderer(mailbox: pipeline.mailbox)
+        let p = Pipeline()
+        pipeline = p
+        renderer = Renderer(mailbox: p.mailbox)
         state.config = settings.effectConfig
         state.effectActive = settings.effectActive
         state.launch(wasRevealed: settings.wasRevealed)
@@ -131,12 +134,14 @@ final class Engine: ObservableObject, PipelineDelegate {
         switch p {
         case .active:
             guard started else { return }
-            // "Altid forklædt, når appen åbnes"
-            if settings.has(.onLaunch) && state.restore(.onLaunch) { updateRenderEffect() }
+            // "Altid forklædt, når appen åbnes" – kun efter baggrund (ikke kontrolcenter/notifikationer)
+            if wasInBackground && settings.has(.onLaunch) && state.restore(.onLaunch) { updateRenderEffect() }
+            wasInBackground = false
             volume.activate()
             motion.start()
             if !galleryOpen { source?.start() }
         case .background:
+            wasInBackground = true
             if recording { stopRecording() }
             source?.stop()
             motion.stop()
@@ -253,7 +258,7 @@ final class Engine: ObservableObject, PipelineDelegate {
 
     // MARK: PipelineDelegate
 
-    func pipeline(summary s: PipelineSummary) {
+    func pipelineDidAnalyze(_ s: PipelineSummary) {
         cardVisible = s.cardVisible
         state.noteCard(visible: s.cardVisible, at: s.time)
         for e in state.tick(now: CACurrentMediaTime()) {
@@ -279,11 +284,11 @@ final class Engine: ObservableObject, PipelineDelegate {
         }
     }
 
-    func pipelineShake() {
+    func pipelineDidShake() {
         if trigger(.shakeCard, hitCard: true, at: nil) { addLog("Ryst kortet · afsløret (\(transitionName))") }
     }
 
-    func pipeline(preview: CGImage) {
+    func pipelineDidPreview(_ preview: CGImage) {
         guard panelOpen else { return }
         readout.preview = UIImage(cgImage: preview)
     }

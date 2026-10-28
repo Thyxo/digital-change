@@ -70,9 +70,17 @@ struct RootView: View {
             let s = min(geo.size.width / L.width, geo.size.height / L.height)
             ZStack {
                 Color.black
-                CameraScreen(store: engine.store, s: s, onSecretTap: secretTap)
+                CameraScreen(store: engine.store, s: s)
                     .frame(width: L.width * s, height: L.height * s)
                     .position(x: geo.size.width / 2, y: geo.size.height / 2)
+                // Hemmelig zone i skærmens øverste venstre hjørne (90×90 pt, også på skærme med sorte kanter):
+                // 5 hurtige tryk = menu, hold 1 sek. = panik.
+                Color.clear.contentShape(Rectangle())
+                    .frame(width: 90, height: 90)
+                    .position(x: 45, y: 45)
+                    .onTapGesture { secretTap() }
+                    .onLongPressGesture(minimumDuration: 1) { engine.panic() }
+                    .accessibilityIdentifier("secretZone")
                 HiddenVolumeView(view: engine.volume.volumeView)
                     .frame(width: 1, height: 1)
                     .allowsHitTesting(false)
@@ -111,7 +119,6 @@ struct CameraScreen: View {
     @EnvironmentObject var settings: AppSettings
     @ObservedObject var store: PhotoStore
     let s: CGFloat
-    let onSecretTap: () -> Void
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -142,14 +149,6 @@ struct CameraScreen: View {
             ThumbnailButton(store: store, s: s).position(x: L.thumbX * s, y: L.rowY * s)
             ModePill(s: s).position(x: L.modeCenter.x * s, y: L.modeCenter.y * s)
             FlipButton(s: s).position(x: L.flipX * s, y: L.rowY * s)
-
-            // Hemmelig zone øverst til venstre: 5 tryk = menu, hold 1 sek. = panik
-            Color.clear.contentShape(Rectangle())
-                .frame(width: 90 * s, height: 90 * s)
-                .position(x: 45 * s, y: 45 * s)
-                .onTapGesture { onSecretTap() }
-                .onLongPressGesture(minimumDuration: 1) { engine.panic() }
-                .accessibilityIdentifier("secretZone")
         }
         .frame(width: L.width * s, height: L.height * s)
     }
@@ -326,14 +325,15 @@ struct TopPill: View {
 
 /// "⋯" åbner en simpel ekstra række (kun udseende).
 struct MoreRow: View {
+    static let symbols = ["timer", "plusminus.circle", "camera.filters", "aspectratio"]
     let s: CGFloat
     @State private var selected: Int?
 
     var body: some View {
         HStack(spacing: 22 * s) {
-            ForEach(Array(["timer", "plusminus.circle", "camera.filters", "aspectratio"].enumerated()), id: \.offset) { i, name in
+            ForEach(0..<MoreRow.symbols.count, id: \.self) { i in
                 Button { selected = selected == i ? nil : i } label: {
-                    Image(systemName: name)
+                    Image(systemName: MoreRow.symbols[i])
                         .font(.system(size: 17 * s))
                         .foregroundStyle(selected == i ? L.yellow : .white)
                         .frame(width: 30 * s, height: 30 * s)
