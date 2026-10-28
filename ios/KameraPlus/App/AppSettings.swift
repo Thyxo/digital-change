@@ -49,6 +49,8 @@ final class AppSettings: ObservableObject {
     /// Søgeren er sløret ved åbning, indtil kortet er fundet og dækket (højst `warmupMax` sek.).
     @Published var warmupBlur: Bool { didSet { d.set(warmupBlur, forKey: "warmupBlur") } }
     @Published var warmupMax: Double { didSet { d.set(warmupMax, forKey: "warmupMax") } }
+    /// 0…1: sløring, mørke og farvetab under opstarten.
+    @Published var warmupStrength: Double { didSet { d.set(warmupStrength, forKey: "warmupStrength") } }
     @Published var lockMarker: LockMarker { didSet { d.set(lockMarker.rawValue, forKey: "lockMarker") } }
 
     // Kamera-realisme
@@ -74,7 +76,7 @@ final class AppSettings: ObservableObject {
             "shakeSensitivity": ShakeSensitivity.normal.rawValue,
             "restores": AppSettings.defaultRestores.map(\.rawValue), "autoRestoreSeconds": 5.0, "wasRevealed": false,
             "occlusionSensitivity": 0.5, "blur": 0.35, "grain": 0.35, "lockExposure": true, "showMask": false,
-            "searchArea": SearchArea.aroundMiddle.rawValue, "warmupBlur": true, "warmupMax": 1.5,
+            "searchArea": SearchArea.aroundMiddle.rawValue, "warmupBlur": true, "warmupMax": 1.5, "warmupStrength": 0.85,
             "lockMarker": LockMarker.moreDot.rawValue,
             "grid": true, "level": true, "mirrorViewfinder": true, "mirrorSaved": false, "focusSquare": true,
             "shutterSound": true, "shutterBlink": true, "saveToPhotos": false, "testVideo": false,
@@ -98,6 +100,7 @@ final class AppSettings: ObservableObject {
         warmupBlur = d.bool(forKey: "warmupBlur")
         warmupMax = AppSettings.warmupChoices.contains(d.double(forKey: "warmupMax")) ? d.double(forKey: "warmupMax") : 1.5
         lockMarker = LockMarker(rawValue: d.string(forKey: "lockMarker") ?? "") ?? .moreDot
+        warmupStrength = min(1, max(0, d.double(forKey: "warmupStrength")))
         grid = d.bool(forKey: "grid")
         level = d.bool(forKey: "level")
         mirrorViewfinder = d.bool(forKey: "mirrorViewfinder")
@@ -139,6 +142,7 @@ final class AppSettings: ObservableObject {
         searchArea = .aroundMiddle
         warmupBlur = true
         warmupMax = 1.5
+        warmupStrength = 0.85
         lockMarker = .moreDot
     }
 }

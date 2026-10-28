@@ -208,6 +208,7 @@ final class Engine: ObservableObject, PipelineDelegate {
         renderer.targetColor = settings.disguise.target
         renderer.lodBias = Float(-0.25 + 2.25 * settings.blur)
         renderer.grain = Float(settings.grain)
+        renderer.warmStrength = Float(settings.warmupStrength)
     }
 
     /// Kortet kameraet ser (kilde) til sporingen, målkortet til visningen.

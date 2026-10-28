@@ -176,6 +176,7 @@ struct SecretPanel: View {
                     ForEach(AppSettings.warmupChoices, id: \.self) { Text(String(format: "%g s", $0).replacingOccurrences(of: ".", with: ",")).tag($0) }
                 }
                 .pickerStyle(.segmented)
+                slider("Styrke", value: $s.warmupStrength, range: 0...1, text: "\(Int(s.warmupStrength * 100)) %")
             }
             Picker("Markør: kortet er fundet", selection: $s.lockMarker) {
                 Text("Prik ved ⌄ (mere)").tag(LockMarker.moreDot)

@@ -38,6 +38,8 @@ struct RenderUniforms {
 struct BlurUniforms {
     var lod: Float
     var dim: Float
+    var sat: Float
+    var pad: Float = 0
     var texel: SIMD2<Float>
 }
 
@@ -63,6 +65,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var blurSource: MTLTexture?
     private var warmOn = false
     private var warmOffAt: CFTimeInterval = 0
+    /// Sløringens styrke 0…1: mere sløring, mørkere og færre farver.
+    var warmStrength: Float = 0.85
     private var textureCache: CVMetalTextureCache?
     private var visTexture: MTLTexture?
     private var emptyVis: MTLTexture?
@@ -293,7 +297,9 @@ final class Renderer: NSObject, MTKViewDelegate {
                     blit.endEncoding()
                 }
                 if let enc = cb.makeRenderCommandEncoder(descriptor: rpd) {
-                    var b = BlurUniforms(lod: 5.5 * amount, dim: 1 - 0.25 * amount,
+                    let k = warmStrength
+                    var b = BlurUniforms(lod: (4 + 4.5 * k) * amount, dim: 1 - (0.1 + 0.3 * k) * amount,
+                                         sat: 1 - 0.9 * k * amount,
                                          texel: SIMD2(1 / Float(src.width), 1 / Float(src.height)))
                     enc.setRenderPipelineState(blurState)
                     enc.setFragmentTexture(src, index: 0)

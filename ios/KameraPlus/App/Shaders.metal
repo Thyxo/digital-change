@@ -123,6 +123,8 @@ fragment float4 kp_fragment(VOut in [[stage_in]],
 struct BlurUniforms {
     float lod;      // mipmap-niveau (0 = skarpt)
     float dim;      // lysstyrke (1 = uændret)
+    float sat;      // farvemætning (1 = uændret, 0 = gråtoner) – så kortets farve ikke kan anes
+    float pad;
     float2 texel;   // 1 / størrelse
 };
 
@@ -140,5 +142,7 @@ fragment float4 kp_blur(VOut in [[stage_in]],
             wsum += w;
         }
     }
-    return float4(acc / wsum * b.dim, 1.0);
+    float3 c = acc / wsum;
+    float y = dot(c, float3(0.2126, 0.7152, 0.0722));
+    return float4(mix(float3(y), c, b.sat) * b.dim, 1.0);
 }
