@@ -1,0 +1,10 @@
+ios/build/
+ios/Payload/
+ios/*.ipa
+ios/KameraPlus.xcodeproj/
+ios/KameraPlus/Info.plist
+ios/.build/
+ios/*.log
+.DS_Store
+node_modules/
+__pycache__/

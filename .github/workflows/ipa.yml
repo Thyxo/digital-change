@@ -1,0 +1,99 @@
+name: Build IPA
+
+on:
+  push:
+    branches: [main, dev]
+    paths: ["ios/**", "scripts/**", ".github/workflows/ipa.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Logic tests (farve, maske, selvtest)
+        working-directory: ios
+        run: |
+          rc=0
+          xcodebuild test -project KameraPlus.xcodeproj -scheme KameraPlusLogicTests -destination 'platform=macOS' > test.log 2>&1 || rc=$?
+          grep -E "Test Case|error:|Selvtest|Overførsel|LUT|TEST SUCCEEDED|TEST FAILED" test.log | tail -n 120 || true
+          [ $rc -eq 0 ] || tail -n 60 test.log
+          exit $rc
+
+      - name: UI tests (simulator, hemmelig menu og panik)
+        working-directory: ios
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)['devices']
+          c=[(r,x) for r,v in d.items() if 'iOS' in r for x in v if x['name'].startswith('iPhone')]
+          c.sort(key=lambda t:(int(t[0].split('iOS-')[1].split('-')[0]), t[1]['name']))
+          print(c[-1][1]['udid']); print(c[-1][0], c[-1][1]['name'], file=sys.stderr)")
+          rc=0
+          xcodebuild test -project KameraPlus.xcodeproj -scheme KameraPlus -destination "id=$UDID" \
+            CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO > uitest.log 2>&1 || rc=$?
+          grep -E "Test Case|error:|failed|TEST SUCCEEDED|TEST FAILED" uitest.log | tail -n 60 || true
+          [ $rc -eq 0 ] || tail -n 80 uitest.log
+          exit $rc
+
+      - name: Build (unsigned)
+        working-directory: ios
+        run: |
+          rc=0
+          xcodebuild -project KameraPlus.xcodeproj -scheme KameraPlus \
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            MARKETING_VERSION=1.0.${{ github.run_number }} \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build > build.log 2>&1 || rc=$?
+          grep -E "error:|warning: .*/KameraPlus/|BUILD" build.log | sort -u | tail -n 120 || true
+          [ $rc -eq 0 ] || tail -n 60 build.log
+          exit $rc
+
+      - name: Package IPA
+        working-directory: ios
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/KameraPlus.app Payload/
+          plutil -p Payload/KameraPlus.app/Info.plist | grep -E "CFBundleDisplayName|CFBundleIdentifier|NSCamera" 
+          zip -qry KameraPlus.ipa Payload
+          ls -lh KameraPlus.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KameraPlus-ipa
+          path: ios/KameraPlus.ipa
+
+      - name: Publish release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: KameraPlus 1.0.${{ github.run_number }}
+          body: "Usigneret IPA. Installér via SideStore-kilden, AltStore eller Sideloadly (gratis Apple ID)."
+          files: ios/KameraPlus.ipa
+          make_latest: true
+
+      - name: Update SideStore source
+        if: github.ref == 'refs/heads/main'
+        run: |
+          python3 scripts/make_source.py "1.0.${{ github.run_number }}" "${{ github.run_number }}" ios/KameraPlus.ipa \
+            "https://github.com/${{ github.repository }}/releases/download/build-${{ github.run_number }}/KameraPlus.ipa"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add sidestore/source.json
+          git commit -m "SideStore-kilde: 1.0.${{ github.run_number }}"
+          git pull --rebase origin main
+          git push origin HEAD:main
