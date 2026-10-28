@@ -1,3 +1,4 @@
+# Test → build → IPA. dev = test + build, main = release + SideStore-kilde.
 name: Build IPA
 
 on:
