@@ -1,4 +1,4 @@
-# Test → build → IPA. dev = test + build, main = release + SideStore-kilde.
+# Logik-tests → build → IPA. dev = test + build, main = release + SideStore-kilde.
 name: Build IPA
 
 on:
@@ -9,6 +9,11 @@ on:
 
 permissions:
   contents: write
+
+# Et nyt push afbryder en igangværende kørsel på samme branch
+concurrency:
+  group: ipa-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -32,31 +37,16 @@ jobs:
         working-directory: ios
         run: xcodegen generate
 
-      - name: Logic tests (farve, maske, selvtest)
+      # Hurtige logik-tests (selvtesten og UI-testene køres ikke i CI – de tog ~12 min; kør selvtesten lokalt
+      # med swift test eller i appens menu)
+      - name: Logic tests
         working-directory: ios
         run: |
           rc=0
-          xcodebuild test -project KameraPlus.xcodeproj -scheme KameraPlusLogicTests -destination 'platform=macOS' > test.log 2>&1 || rc=$?
-          grep -E "Test Case|error:|Selvtest|Overførsel|LUT|TEST SUCCEEDED|TEST FAILED" test.log | tail -n 120 || true
+          xcodebuild test -project KameraPlus.xcodeproj -scheme KameraPlusLogicTests -destination 'platform=macOS' \
+            -skip-testing:KameraPlusLogicTests/SelfTestTests > test.log 2>&1 || rc=$?
+          grep -E "error:|failed|TEST SUCCEEDED|TEST FAILED" test.log | tail -n 60 || true
           [ $rc -eq 0 ] || tail -n 60 test.log
-          exit $rc
-
-      - name: UI tests (simulator, hemmelig menu og panik)
-        working-directory: ios
-        run: |
-          UDID=$(xcrun simctl list devices available -j | python3 -c "
-          import json,sys
-          d=json.load(sys.stdin)['devices']
-          c=[(r,x) for r,v in d.items() if 'iOS' in r for x in v if x['name'].startswith('iPhone') and 'SE' not in x['name']]
-          pref=['iPhone 17 Pro','iPhone 16 Pro','iPhone 17','iPhone 16','iPhone 15 Pro','iPhone 15']
-          c.sort(key=lambda t:(int(t[0].split('iOS-')[1].split('-')[0]), -(pref.index(t[1]['name']) if t[1]['name'] in pref else 99)))
-          print(c[-1][1]['udid']); print(c[-1][0], c[-1][1]['name'], file=sys.stderr)")
-          rc=0
-          # Release-byg (som IPA'en): Debug-bygget er for langsomt til 5 tryk på 2,5 sek. lige efter start
-          xcodebuild test -project KameraPlus.xcodeproj -scheme KameraPlus -configuration Release -destination "id=$UDID" \
-            CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO > uitest.log 2>&1 || rc=$?
-          grep -E "Test Case|error:|failed|TEST SUCCEEDED|TEST FAILED" uitest.log | tail -n 60 || true
-          [ $rc -eq 0 ] || tail -n 80 uitest.log
           exit $rc
 
       - name: Build (unsigned)

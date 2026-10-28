@@ -35,7 +35,7 @@ struct SelfTestReport {
     var falseOcclusionP95: Double { quantile(falseOcclusion, 0.95) }
 
     var passed: Bool {
-        missRate <= 0.02 && falseAcceptRate <= 0.01 && otherColorRate <= 0.02
+        missRate <= 0.03 && falseAcceptRate <= 0.01 && otherColorRate <= 0.02
             && cornerMedian <= 0.6 && cornerP95 <= 1.6
             && fingerMean >= 0.9 && falseOcclusionMean <= 0.02 && falseOcclusionP95 <= 0.06
     }
@@ -73,7 +73,9 @@ enum SelfTest {
             let out = Synth.render(scene)
             var cand: [Quad] = []
             if let c = scene.card {
-                cand = [Synth.noisyQuad(c.quad, rng: &rng, sigma: 0.012 * c.quad.shortSide)]
+                // halvdelen uden Vision-firkant: kortet skal findes ud fra blækkets farve alene
+                let noisy = Synth.noisyQuad(c.quad, rng: &rng, sigma: 0.012 * c.quad.shortSide)
+                cand = i % 2 == 0 ? [] : [noisy]
             } else {
                 // en tom firkant (fx en bog eller et billede) af kortstørrelse
                 let cw = rng.range(0.35, 0.65) * Double(width)

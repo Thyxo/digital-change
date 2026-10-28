@@ -34,8 +34,11 @@ struct TrackerConfig: Equatable {
     /// 0…1: højere = flere pixels regnes for fingre (dækker kortet).
     var occlusionSensitivity = 0.5
     /// Hvor mange billeder et tabt kort holdes, før forklædningen slukkes (som den gamle maske: 4).
-    var holdFrames = 4
+    var holdFrames = 8
+    /// Mønster-korrelation for at finde kortet første gang og for at blive ved med at følge det
+    /// (lavere, så bevægelsesslør ikke taber kortet).
     var acceptScore = 0.6
+    var keepScore = 0.42
 }
 
 /// Finder og følger det fysiske Rider Back-kort ved at lægge skabelonens mønster præcist ned over kameraets billede
@@ -114,7 +117,7 @@ final class CardTracker {
     /// `image`: kamerabilledet (fx 540×720). `candidates`: Vision-firkanter i samme pixels.
     func update(_ image: RGBAImage, candidates: [Quad] = []) -> TrackerOutput {
         let t0 = Date()
-        let pyr = Luma.pyramid(Luma.image(image), levels: 4)
+        let pyr = Luma.pyramid(Luma.image(image), levels: 5)
         var found: (CardTrack, Double)?
 
         if let prev = last {
@@ -125,12 +128,17 @@ final class CardTracker {
                 let pred = (0..<4).map { now[$0] + (now[$0] - pc[$0]) * 0.6 }
                 if let h = Homography.from(template.geometry.corners, to: pred) { start = h }
             }
-            if let r = align(start, pyr: pyr, coarseOnly: false, search: true), verify(r) { found = (r.track, r.inliers) }
-            if found == nil || found!.0.score < 0.75, !candidates.isEmpty, let c = bestCandidate(candidates, pyr: pyr) {
-                if found == nil || c.0.score > found!.0.score + 0.03 { found = c }
+            if let r = align(start, pyr: pyr, coarseOnly: false, search: true), verify(r, minScore: config.keepScore) {
+                found = (r.track, r.inliers)
             }
-        } else if !candidates.isEmpty {
-            found = bestCandidate(candidates, pyr: pyr)
+            if found == nil || found!.0.score < 0.7 {
+                let cands = candidates + (found == nil ? inkCandidates(image) : [])
+                if !cands.isEmpty, let c = bestCandidate(cands, pyr: pyr), found == nil || c.0.score > found!.0.score + 0.03 { found = c }
+            }
+        } else {
+            // startgæt: blækkets farve (virker også når fingre dækker kanten) + Vision-firkanter
+            let cands = inkCandidates(image) + candidates
+            if !cands.isEmpty { found = bestCandidate(cands, pyr: pyr) }
         }
 
         var out = TrackerOutput()
@@ -171,9 +179,35 @@ final class CardTracker {
 
     // MARK: Startgæt fra firkanter
 
+    /// Gitter-søgning for et startgæt: drejning ±6°, størrelse ±8 % (om kortets centrum) og forskydning
+    /// på et groft niveau (kortet ca. 40–80 px bredt). Returnerer den homografi, hvis mønster passer bedst.
+    private func searchInit(_ h: Homography, pyr: [GrayImage]) -> Homography {
+        let cw = cardWidth(h)
+        guard cw.isFinite, cw > 12 else { return h }
+        var k = 0
+        while k + 1 < pyr.count && cw / Double(1 << (k + 1)) >= 40 { k += 1 }
+        let s = 1.0 / Double(1 << k)
+        let tl = template.level(forPixelsPerUnit: cw * s / template.geometry.width)
+        let g = template.geometry
+        let cx = g.width / 2, cy = g.height / 2
+        var best = (h, -2.0)
+        for deg in [-6.0, -3, 0, 3, 6] {
+            for sc in [0.92, 0.96, 1.0, 1.04, 1.08] {
+                let a = deg * .pi / 180
+                let ca = cos(a) * sc, sa = sin(a) * sc
+                // drejning + skalering om kortets centrum (kanoniske koordinater)
+                let R = Homography([ca, -sa, cx - ca * cx + sa * cy, sa, ca, cy - sa * cx - ca * cy, 0, 0, 1])
+                let Hn = Homography.scale(s, s) * h * R * Ninv
+                let (moved, score) = translationSearchScored(Hn, cam: pyr[k], pts: points[tl], radius: 6)
+                if score > best.1 { best = (Homography.scale(1 / s, 1 / s) * moved * N, score) }
+            }
+        }
+        return best.0
+    }
+
     private func bestCandidate(_ cands: [Quad], pyr: [GrayImage]) -> (CardTrack, Double)? {
         var coarse: [Aligned] = []
-        for q in cands.prefix(3) where q.area > 400 {
+        for q in cands.prefix(5) where q.area > 400 {
             let c = q.corners
             let side01 = (c[0].distance(c[1]) + c[2].distance(c[3])) / 2
             let side12 = (c[1].distance(c[2]) + c[3].distance(c[0])) / 2
@@ -181,9 +215,11 @@ final class CardTracker {
             let rots = side01 <= side12 ? [0, 2] : [1, 3]
             for r in rots {
                 let dst = (0..<4).map { c[($0 + r) % 4] }
-                guard let h = Homography.from(template.geometry.corners, to: dst),
-                      let a = align(h, pyr: pyr, coarseOnly: true) else { continue }
-                coarse.append(a)
+                guard let h = Homography.from(template.geometry.corners, to: dst) else { continue }
+                // startgættet kan ligge lidt ved siden af (farve-rektangel, Vision på afrundede hjørner):
+                // søg drejning, størrelse og forskydning på et groft niveau, så justerer LK resten
+                let bestA = align(searchInit(h, pyr: pyr), pyr: pyr, coarseOnly: true, search: false)
+                if let a = bestA { coarse.append(a) }
             }
         }
         // mønstret er næsten 180°-symmetrisk, så de to bedste justeres helt, og den bedste til sidst vinder
@@ -217,13 +253,16 @@ final class CardTracker {
         guard cw0.isFinite, cw0 > 12 else { return nil }
         var kStart = 0
         while kStart + 1 < pyr.count && cw0 / Double(1 << (kStart + 1)) >= 56 { kStart += 1 }
-        let levels = coarseOnly ? [kStart] : Array(stride(from: kStart, through: 0, by: -1))
+        // startgæt: også de grovere niveauer (kortet ned til ca. 24 px), hvor mønstret er glat og fangområdet stort
+        var kFirst = kStart
+        if coarseOnly { while kFirst + 1 < pyr.count && cw0 / Double(1 << (kFirst + 1)) >= 24 { kFirst += 1 } }
+        let levels = coarseOnly ? Array(stride(from: kFirst, through: kStart, by: -1)) : Array(stride(from: kStart, through: 0, by: -1))
         if search {
             // hurtig bevægelse: søg forskydningen på et grovere (glattere) niveau end første justering
             let ks = min(kStart + 1, pyr.count - 1)
             let s = 1.0 / Double(1 << ks)
             let tl = template.level(forPixelsPerUnit: cw0 * s / template.geometry.width)
-            let Hs = translationSearch(Homography.scale(s, s) * H * Ninv, cam: pyr[ks], pts: points[tl], radius: 6)
+            let Hs = translationSearch(Homography.scale(s, s) * H * Ninv, cam: pyr[ks], pts: points[tl], radius: 10)
             H = Homography.scale(1 / s, 1 / s) * Hs * N
         }
         var alpha = 0.0, beta = 0.0, haveAB = false
@@ -236,6 +275,11 @@ final class CardTracker {
             let pts = points[tl]
             var Hn = S * H * Ninv
             let its = k == kStart ? 14 : 7
+            if k == kFirst && coarseOnly {
+                // startgæt: først kun affin (større fangområde), så fuld homografi
+                guard gaussNewton(&Hn, cam: pyr[k], pts: pts, iterations: 10, alpha: &alpha, beta: &beta, haveAB: &haveAB, affine: true) != nil
+                else { return nil }
+            }
             guard let st = gaussNewton(&Hn, cam: pyr[k], pts: pts, iterations: its, alpha: &alpha, beta: &beta, haveAB: &haveAB) else {
                 return nil
             }
@@ -250,6 +294,10 @@ final class CardTracker {
 
     /// Grov søgning efter forskydning (hurtig bevægelse mellem to billeder): bedste korrelation over et gitter.
     private func translationSearch(_ Hn: Homography, cam: GrayImage, pts: [LKPoint], radius: Int) -> Homography {
+        translationSearchScored(Hn, cam: cam, pts: pts, radius: radius).0
+    }
+
+    private func translationSearchScored(_ Hn: Homography, cam: GrayImage, pts: [LKPoint], radius: Int) -> (Homography, Double) {
         let m = Hn.m
         var base: [(Double, Double, Double)] = []
         var i = 0
@@ -261,7 +309,7 @@ final class CardTracker {
             }
             i += 2
         }
-        guard base.count > 30 else { return Hn }
+        guard base.count > 30 else { return (Hn, -1) }
         func ncc(_ dx: Double, _ dy: Double) -> Double {
             var n = 0.0, sI = 0.0, sT = 0.0, sII = 0.0, sTT = 0.0, sIT = 0.0
             for (x, y, t) in base {
@@ -282,11 +330,11 @@ final class CardTracker {
                 if v > best.2 { best = (Double(dx), Double(dy), v) }
             }
         }
-        return Homography.scale(1, 1, tx: best.0, ty: best.1) * Hn
+        return (Homography.scale(1, 1, tx: best.0, ty: best.1) * Hn, best.2)
     }
 
-    private func verify(_ a: Aligned) -> Bool {
-        guard a.track.score >= config.acceptScore, a.inliers >= 0.4, a.valid >= 0.3, a.alpha > 0.06 else {
+    private func verify(_ a: Aligned, minScore: Double? = nil) -> Bool {
+        guard a.track.score >= (minScore ?? config.acceptScore), a.inliers >= 0.4, a.valid >= 0.3, a.alpha > 0.06 else {
             lastReject = String(format: "mønster (score %.2f, inliers %.2f, gyldige %.2f, kontrast %.2f)", a.track.score, a.inliers, a.valid, a.alpha)
             return false
         }
@@ -302,7 +350,7 @@ final class CardTracker {
     /// Gauss–Newton/Levenberg–Marquardt på 8 homografi-parametre + lys (alpha, beta), med Huber-vægte
     /// (fingre og blænding vejer ikke). `Hn`: normaliserede kortkoordinater → kameraniveauets pixels.
     private func gaussNewton(_ Hn: inout Homography, cam: GrayImage, pts: [LKPoint], iterations: Int,
-                             alpha: inout Double, beta: inout Double, haveAB: inout Bool)
+                             alpha: inout Double, beta: inout Double, haveAB: inout Bool, affine: Bool = false)
         -> (ncc: Double, inliers: Double, valid: Double)? {
         let n = pts.count
         guard n >= 40 else { return nil }
@@ -412,6 +460,11 @@ final class CardTracker {
             // løs (A + λ·diag(A)) δ = −g
             var M = A
             for a in 0..<10 { M[a * 10 + a] += lambda * max(A[a * 10 + a], 1e-9) + 1e-12 }
+            if affine {
+                // kun affin: perspektiv-parametrene holdes faste
+                for a in 6...7 { for b in 0..<10 { M[a * 10 + b] = 0; M[b * 10 + a] = 0 }; M[a * 10 + a] = 1 }
+                g[6] = 0; g[7] = 0
+            }
             guard let d = LinearSolve.solve(M, g.map { -$0 }, n: 10) else { break }
             var step = 0.0
             for a in 0..<8 { step = max(step, abs(d[a])) }
@@ -565,6 +618,9 @@ final class CardTracker {
                 mean[y * bw + x] = t * t * (3 - 2 * t)
             }
         }
+        // Fingre kommer altid ind over kortets kant: dækkede områder, der ikke rører overlay-områdets kant,
+        // er fejl (fx mørkt blæk, der er uskarpt i kameraet) og fjernes. Ellers ses det ægte kort som pletter.
+        CardTracker.keepEdgeConnected(&mean, inside: inside, width: bw, height: bh)
         if prevOcc.count != W * Hh { prevOcc = [Float](repeating: 0, count: W * Hh) }
         var newOcc = [Float](repeating: 0, count: W * Hh)
         var local = [Float](repeating: 0, count: n)
@@ -613,6 +669,149 @@ final class CardTracker {
             }
         }
         return Visibility(output: out, gain: gain, offset: offset, colorOK: colorOK)
+    }
+
+    /// Beholder kun dækkede områder (> 0,3), der hænger sammen med kanten af området (eller billedets kant).
+    static func keepEdgeConnected(_ m: inout [Float], inside: [UInt8], width w: Int, height h: Int) {
+        var seen = [Bool](repeating: false, count: w * h)
+        var stack: [Int] = []
+        for y in 0..<h {
+            for x in 0..<w {
+                let i = y * w + x
+                guard m[i] > 0.3, !seen[i] else { continue }
+                var comp: [Int] = []
+                var touches = false
+                seen[i] = true
+                stack.append(i)
+                while let j = stack.popLast() {
+                    comp.append(j)
+                    let jx = j % w, jy = j / w
+                    if jx == 0 || jy == 0 || jx == w - 1 || jy == h - 1 || inside[j] != 2 { touches = true }
+                    for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                        let nx = jx + dx, ny = jy + dy
+                        guard nx >= 0, ny >= 0, nx < w, ny < h else { continue }
+                        let k = ny * w + nx
+                        if inside[k] != 2 { touches = true; continue }
+                        if !seen[k] && m[k] > 0.3 { seen[k] = true; stack.append(k) }
+                    }
+                }
+                if !touches { for j in comp { m[j] = 0 } }
+            }
+        }
+    }
+
+    // MARK: Startgæt fra blækkets farve
+
+    /// Kortet fundet ud fra mønstrets farve (blå/rød blæk) i lav opløsning: største farvede områder → orienteret
+    /// rektangel = mønsterrammen → kortets hjørner. Groft (fingre, perspektiv), men justeringen klarer resten.
+    func inkCandidates(_ image: RGBAImage) -> [Quad] {
+        let st = 4
+        let w = image.width / st, h = image.height / st
+        guard w > 8, h > 8 else { return [] }
+        var mask = [Bool](repeating: false, count: w * h)
+        let blue = template.color == .blue
+        image.pixels.withUnsafeBufferPointer { p in
+            for y in 0..<h {
+                for x in 0..<w {
+                    let k0 = ((y * st + 1) * image.width + x * st + 1) * 4, k1 = k0 + image.width * 4
+                    let r = (Int(p[k0]) + Int(p[k0 + 4]) + Int(p[k1]) + Int(p[k1 + 4])) / 4
+                    let g = (Int(p[k0 + 1]) + Int(p[k0 + 5]) + Int(p[k1 + 1]) + Int(p[k1 + 5])) / 4
+                    let b = (Int(p[k0 + 2]) + Int(p[k0 + 6]) + Int(p[k1 + 2]) + Int(p[k1 + 6])) / 4
+                    mask[y * w + x] = blue ? (b > r + 28 && b > g + 12 && b > 45)
+                                           : (r > g + 45 && r > b + 35 && r * 10 > g * 15)
+                }
+            }
+        }
+        // luk huller (hvide streger og fingre deler ellers mønstret i stykker): udvid 1 pixel
+        var grown = mask
+        for y in 0..<h {
+            for x in 0..<w where !mask[y * w + x] {
+                if (x > 0 && mask[y * w + x - 1]) || (x < w - 1 && mask[y * w + x + 1])
+                    || (y > 0 && mask[(y - 1) * w + x]) || (y < h - 1 && mask[(y + 1) * w + x]) { grown[y * w + x] = true }
+            }
+        }
+        let original = mask
+        mask = grown
+        // sammenhængende områder
+        var label = [Int32](repeating: -1, count: w * h)
+        var comps: [[Int]] = []
+        var stack: [Int] = []
+        for i in 0..<(w * h) where mask[i] && label[i] < 0 {
+            var comp: [Int] = []
+            label[i] = Int32(comps.count); stack.append(i)
+            while let j = stack.popLast() {
+                comp.append(j)
+                let jx = j % w, jy = j / w
+                for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    let nx = jx + dx, ny = jy + dy
+                    guard nx >= 0, ny >= 0, nx < w, ny < h else { continue }
+                    let k = ny * w + nx
+                    if mask[k] && label[k] < 0 { label[k] = Int32(comps.count); stack.append(k) }
+                }
+            }
+            comps.append(comp)
+        }
+        let minArea = max(40, w * h / 70)
+        let g = template.geometry
+        let pat = [Point2(g.pattern.minX, g.pattern.minY), Point2(g.pattern.maxX, g.pattern.minY),
+                   Point2(g.pattern.maxX, g.pattern.maxY), Point2(g.pattern.minX, g.pattern.maxY)]
+        var out: [Quad] = []
+        for whole in comps.sorted(by: { $0.count > $1.count }).prefix(2) where whole.count >= minArea {
+            let comp = whole.filter { original[$0] }
+            guard comp.count >= minArea / 2 else { continue }
+            // mindste rektangel om det konvekse hylster (fingres indhak i kanten fyldes ud)
+            let pts = comp.map { Point2(Double($0 % w) + 0.5, Double($0 / w) + 0.5) }
+            let hull = CardTracker.convexHull(pts)
+            guard hull.count >= 3 else { continue }
+            var bestArea = Double.infinity
+            var rectC: [Point2] = []
+            for k in 0..<hull.count {
+                let e = hull[(k + 1) % hull.count] - hull[k]
+                let len = e.length
+                guard len > 1e-9 else { continue }
+                let ux = Point2(e.x / len, e.y / len), uy = Point2(-ux.y, ux.x)
+                var a0 = Double.infinity, a1v = -Double.infinity, b0 = Double.infinity, b1 = -Double.infinity
+                for p in hull {
+                    let pu = p.x * ux.x + p.y * ux.y, pv = p.x * uy.x + p.y * uy.y
+                    a0 = min(a0, pu); a1v = max(a1v, pu); b0 = min(b0, pv); b1 = max(b1, pv)
+                }
+                // pixelcentre → ydre kant: ½ px udad
+                a0 -= 0.5; a1v += 0.5; b0 -= 0.5; b1 += 0.5
+                let area = (a1v - a0) * (b1 - b0)
+                if area < bestArea {
+                    bestArea = area
+                    func P(_ u: Double, _ v: Double) -> Point2 { ux * u + uy * v }
+                    // kort side først (kortets top)
+                    if a1v - a0 <= b1 - b0 { rectC = [P(a0, b0), P(a1v, b0), P(a1v, b1), P(a0, b1)] }
+                    else { rectC = [P(a0, b0), P(a0, b1), P(a1v, b1), P(a1v, b0)] }
+                }
+            }
+            guard rectC.count == 4, rectC[0].distance(rectC[1]) > 6 else { continue }
+            var box = rectC.map { $0 * Double(st) }
+            // med uret i billedet (y nedad)
+            let cross = (box[1].x - box[0].x) * (box[2].y - box[1].y) - (box[1].y - box[0].y) * (box[2].x - box[1].x)
+            if cross < 0 { box = [box[1], box[0], box[3], box[2]] }
+            // to gæt: hylstrets hjørner nærmest rektanglets (følger perspektivet) og selve rektanglet
+            // (hvis en finger dækker et hjørne)
+            let hullS = hull.map { $0 * Double(st) }
+            let trap = box.map { c in hullS.min { $0.distance(c) < $1.distance(c) }! }
+            for b in [trap, box] {
+                guard let hm = Homography.from(pat, to: b) else { continue }
+                out.append(hm.quad(width: g.width, height: g.height))
+            }
+        }
+        return out
+    }
+
+    /// Konvekst hylster (monoton kæde), med uret ligegyldigt.
+    static func convexHull(_ input: [Point2]) -> [Point2] {
+        let p = input.sorted { $0.x != $1.x ? $0.x < $1.x : $0.y < $1.y }
+        guard p.count > 2 else { return p }
+        func cross(_ o: Point2, _ a: Point2, _ b: Point2) -> Double { (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x) }
+        var lower: [Point2] = [], upper: [Point2] = []
+        for q in p { while lower.count >= 2 && cross(lower[lower.count - 2], lower[lower.count - 1], q) <= 0 { lower.removeLast() }; lower.append(q) }
+        for q in p.reversed() { while upper.count >= 2 && cross(upper[upper.count - 2], upper[upper.count - 1], q) <= 0 { upper.removeLast() }; upper.append(q) }
+        return Array(lower.dropLast() + upper.dropLast())
     }
 
     /// Farveafstand der tåler skygge og lysstyrke (farvetone vejer, lysstyrke kun ved store forskelle).

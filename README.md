@@ -63,7 +63,7 @@ Kontrolbillede: `ref/rider-check.png` (blå | rød | ternet blanding | forskel).
 
 ## 3. Forløbet
 
-1. Telefonen ligger med skærmen op. Hold det **blå** kort over frontkameraet, så **hele kortet** er i billedet, til det er fundet (typisk under et halvt sekund). Derefter følges det også delvist uden for billedet.
+1. Telefonen ligger med skærmen op. Hold det **blå** kort 10–15 cm over frontkameraet, så det meste af kortet er i billedet. Det findes ud fra mønstrets farve (fingre over kanten gør ikke noget) og følges derefter, også delvist uden for billedet.
 2. Skærmen viser kortet som det **røde** Rider Back (forklædt). Fingre over kortet, baggrund og andre ting er urørte.
 3. **Tryk på kortet** på skærmen → forklædningen slukkes med en bølge fra fingeren (0,5 sek.), og den ægte blå farve kommer frem. Tryk ved siden af kortet giver kun den gule fokusfirkant.
 4. Afsløret bliver ved, også når kortet forlader billedet, vendes eller dækkes – indtil du genskaber forklædningen.
@@ -78,10 +78,10 @@ Er der intet kort i billedet, sker der intet ved tryk (kun fokus).
 
 **Pr. billede (seriel kø):**
 1. Nedskalering til ca. 540×720 (fra 1440×1080).
-2. **Startgæt:** Vision (`VNDetectRectanglesRequest`, 10 Hz når kortet ikke følges sikkert, ellers 2 Hz) giver kortets firkant. Begge 180°-drejninger prøves.
+2. **Startgæt:** blækkets farve (blå/rød) i lav opløsning → konvekst hylster → rektangel og trapez om mønstret, plus Vision-firkanter (`VNDetectRectanglesRequest`, 10 Hz når kortet ikke følges sikkert, ellers 2 Hz). Gitter-søgning (drejning ±6°, størrelse ±8 %, forskydning) og affin start på de groveste niveauer; begge 180°-drejninger prøves.
 3. **Mønster-sporing** (`CardTracker`): det ægte blå Rider Back (256 px skabelon, samme pixels som PNG'en) lægges ned over kamerabilledet med en **homografi** (perspektiv), fundet med Lucas–Kanade på lysstyrke, grov → fin over 3–4 pyramide-niveauer, med lys-forstærkning og Huber-vægte, så fingre og blænding ikke trækker. Hurtig bevægelse: forskydningssøgning på et groft niveau først. Kortet godtages kun ved korrelation ≥ 0,6 med mønstret og rigtig farve (et rødt kort, en bog eller et billede afvises). Holdes i 4 billeder ved udfald.
 4. **Lys:** kamera ≈ forstærkning pr. kanal × skabelon + én fælles forskydning (lineært lys), målt på kortet hvert billede (fanger rummets lys og skærmens røde/blå lys på kortet). Samme lys bruges på målkortet. Lokal lysstyrke (skygge fra hånden) måles også.
-5. **Fingre:** hver pixel på kortet sammenlignes med den forventede farve fra skabelonen (farvetone, så skygger ikke tæller; tåler 1 pixels fejl). Det, der ikke passer, er noget over kortet – der vises kameraets eget billede.
+5. **Fingre:** hver pixel på kortet sammenlignes med den forventede farve fra skabelonen (farvetone, så skygger ikke tæller; tåler 1 pixels fejl). Det, der ikke passer *og hænger sammen med kortets kant* (fingre kommer altid udefra), er noget over kortet – der vises kameraets eget billede. Pletter midt i mønstret ignoreres.
 6. Eksponering og hvidbalance låses, når kortet er set i 5 billeder, og frigøres efter 1,5 sek. uden kort.
 
 **Visning:** Metal (MTKView, CVMetalTextureCache, nul-kopi). Shaderen: kamera → **det ægte røde kort** (1024 px PNG med mipmaps) slået op gennem homografien → kameraets lys og skygge → fingermaske → afsløringens overgang → skærm. Det tegnes over mønstret og den inderste halvdel af den hvide kant; **den yderste halvdel af kanten er altid det fysiske kort**, fordi rigtige kort er skåret lidt forskelligt (hvidt mod hvidt kan ikke ses). Uskarphed og korn kan justeres, så kortet ligner resten af kamerabilledet.
@@ -119,7 +119,7 @@ Ikonerne drejer med telefonen (CoreMotion, blød animation). FOTO/VIDEO følger 
 
 - **Ikke testet på fysisk iPhone.** Testvideoen er syntetisk (men med det ægte kortbillede). Tjek især: kamerabilledets retning/spejling (vinkel 90°), at Vision finder et rigtigt kort, skarphed på kort afstand (frontkameraets fokus), og tiden pr. billede (menuen viser ms; målt ca. 30 ms på en langsom Linux-server, forventet 10–15 ms på iPhone).
 - **Kun Bicycle Rider Back.** Andre bagsider findes ikke (korrelationen med mønstret er for lav).
-- **Hele kortet skal ses først.** Vision skal se kortets firkant én gang. Ligger kortet helt tæt på linsen eller delvist uden for billedet fra start, findes det ikke.
+- **Det meste af kortet skal ses først.** Ligger kortet helt tæt på linsen eller mest uden for billedet fra start, findes det ikke. I selvtesten findes 98 % af kortene uden Vision-firkant og med fingre.
 - **Fingre over kortet** vises korrekt (kameraets billede). Over det røde kort (omvendt tilstand) ligner hud blækket mere: 93 % af fingerpixels findes i selvtesten mod 99,6 % ved blåt.
 - **Stærk refleks** (blankt lys) på kortet bliver set som "noget over kortet" og vises som det ægte kort.
 - **Meget svagt lys / uskarpt kort:** mønstret bliver svært at finde; kortet godtages så ikke (ingen forkert visning, bare ingen effekt).
@@ -153,7 +153,9 @@ Falske kort (tomme firkanter): 0 (0,0 %) · forkert farve godtaget: 0 (0,0 %)
 ```
 Rødt kort vist som blåt (300 billeder): 0,5 % ikke fundet, hjørnefejl median 0,08 px, fingre 93,3 %, ingen falske.
 
-**UI-tests** (`ios/KameraPlusUITests`, iPhone 17 Pro-simulator med iOS 26.2, Release-byg, testvideo i stedet for kamera) – **6 tests, alle grønne**: 5 tryk øverst til venstre åbner menuen, 4 tryk gør ikke, 5 tryk over 3 sek. gør ikke, 5 tryk øverst til højre gør intet, "Færdig" ignoreres i spærretiden (testen forlænger den til 4 sek. med `-doneDelay`, fordi simulatoren er for langsom til at ramme 1 sek. præcist), panik (hold 1,4 sek.) slår effekten fra. CI fejler på røde tests.
+**CI** kører kun de hurtige logik-tests og bygger IPA'en (ca. 3 min). Selvtesten og UI-testene køres lokalt/manuelt.
+
+**UI-tests** (køres ikke i CI; `ios/KameraPlusUITests`, iPhone 17 Pro-simulator med iOS 26.2, Release-byg, testvideo i stedet for kamera) – **6 tests, alle grønne**: 5 tryk øverst til venstre åbner menuen, 4 tryk gør ikke, 5 tryk over 3 sek. gør ikke, 5 tryk øverst til højre gør intet, "Færdig" ignoreres i spærretiden (testen forlænger den til 4 sek. med `-doneDelay`, fordi simulatoren er for langsom til at ramme 1 sek. præcist), panik (hold 1,4 sek.) slår effekten fra. CI fejler på røde tests.
 
 **Ikke testet automatisk:** selve kameraet (AVFoundation), Vision på rigtige kort, sporing på et rigtigt kamerabillede, Metal-billedet på en rigtig skærm, lukker/galleri/video og volumenknapper – det kræver en fysisk iPhone.
 
