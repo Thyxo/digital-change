@@ -52,11 +52,16 @@ struct PipelineConfig: Equatable {
     var shakeSensitivity: ShakeSensitivity = .normal
     var occlusionSensitivity = 0.5
     var wantPreview = false
+    /// Hvor kortet ledes efter første gang, og søgerens zoom (til at omregne gitteret til billedets pixels).
+    var searchArea: SearchArea = .aroundMiddle
+    var zoom = 1.0
 }
 
 struct PipelineSummary {
     var time: Double
     var cardVisible: Bool
+    /// Kortet er fundet i netop dette billede (ikke kun holdt fra tidligere).
+    var cardFresh: Bool
     var analyzed: Bool
     var score: Double
     var occluded: Double
@@ -146,6 +151,7 @@ final class Pipeline: FrameSink, @unchecked Sendable {
             CVPixelBufferUnlockBaseAddress(pb, .readOnly)
             tracker.config.occlusionSensitivity = cfg.occlusionSensitivity
             let iw = Double(image.width), ih = Double(image.height)
+            tracker.config.searchRegion = cfg.searchArea.frameRegion(frameWidth: iw, frameHeight: ih, zoom: cfg.zoom)
             var cands = rectangles.quads(now: started).map { Quad(corners: $0.corners.map { Point2($0.x * iw, $0.y * ih) }) }
             if let hint = syntheticHint { cands.insert(Quad(corners: hint.corners.map { $0 * (1 / f) }), at: 0) }
             output = tracker.update(image, candidates: cands)
@@ -206,7 +212,7 @@ final class Pipeline: FrameSink, @unchecked Sendable {
             fpsCount = 0
             fpsStart = now
         }
-        let summary = PipelineSummary(time: now, cardVisible: card != nil, analyzed: analyzed, score: card?.score ?? 0,
+        let summary = PipelineSummary(time: now, cardVisible: card != nil, cardFresh: card != nil && output.fresh, analyzed: analyzed, score: card?.score ?? 0,
                                       occluded: output.occluded, fps: fps, ms: (now - started) * 1000, shake: shakeMeter)
         DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.delegate?.pipelineDidAnalyze(summary) } }
 

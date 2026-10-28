@@ -118,3 +118,27 @@ fragment float4 kp_fragment(VOut in [[stage_in]],
     c = mix(c * (1.0 - u.flash), float3(1.0), u.white);
     return float4(c, 1.0);
 }
+
+// Sløret opstart: det færdige billede (med målkortet) sløret via mipmaps + 5×5 gauss-prøver og dæmpet lidt.
+struct BlurUniforms {
+    float lod;      // mipmap-niveau (0 = skarpt)
+    float dim;      // lysstyrke (1 = uændret)
+    float2 texel;   // 1 / størrelse
+};
+
+fragment float4 kp_blur(VOut in [[stage_in]],
+                        texture2d<float> src [[texture(0)]],
+                        constant BlurUniforms &b [[buffer(0)]]) {
+    constexpr sampler ms(filter::linear, mip_filter::linear, address::clamp_to_edge);
+    float spacing = exp2(b.lod) * 0.5;
+    float3 acc = float3(0.0);
+    float wsum = 0.0;
+    for (int j = -2; j <= 2; j++) {
+        for (int i = -2; i <= 2; i++) {
+            float w = exp(-float(i * i + j * j) / 4.5);
+            acc += w * src.sample(ms, in.uv + float2(i, j) * b.texel * spacing, level(b.lod)).rgb;
+            wsum += w;
+        }
+    }
+    return float4(acc / wsum * b.dim, 1.0);
+}

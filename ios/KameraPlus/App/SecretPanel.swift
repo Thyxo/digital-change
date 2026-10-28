@@ -15,6 +15,7 @@ struct SecretPanel: View {
                 effectSection
                 restoreSection
                 cardSection
+                warmupSection
                 realismSection
                 logSection
                 Section {
@@ -149,6 +150,11 @@ struct SecretPanel: View {
             slider("Fingerfølsomhed", value: $s.occlusionSensitivity, range: 0...1, text: "\(Int(s.occlusionSensitivity * 100)) %")
             slider("Uskarphed på kortet", value: $s.blur, range: 0...1, text: "\(Int(s.blur * 100)) %")
             slider("Korn", value: $s.grain, range: 0...1, text: "\(Int(s.grain * 100)) %")
+            Picker("Søg efter kortet", selection: $s.searchArea) {
+                Text("Midterfeltet").tag(SearchArea.middle)
+                Text("Omkring midten").tag(SearchArea.aroundMiddle)
+                Text("Hele billedet").tag(SearchArea.whole)
+            }
             Toggle("Lås eksponering og hvidbalance", isOn: $s.lockExposure)
             Toggle("Vis sporing", isOn: $s.showMask)
             Button("Nulstil til standard", role: .destructive) { confirmReset = true }
@@ -156,7 +162,29 @@ struct SecretPanel: View {
                     Button("Nulstil", role: .destructive) { s.resetToDefaults() }
                 }
         } header: { Text("Kort og sporing") } footer: {
-            Text("Kun Bicycle Rider Back (rød og blå). Appen kender begge bagsider og lægger det ægte målkort præcist over mønstret på det kort, kameraet ser – ingen kalibrering. Hold hele kortet i billedet, til det er fundet; derefter følges det, også delvist uden for billedet. Den yderste del af den hvide kant er altid kameraets eget kort. Fingerfølsomhed: højere = fingre over kortet findes lettere (for højt kan give huller i kortet).")
+            Text("Kun Bicycle Rider Back (rød og blå). Appen kender begge bagsider og lægger det ægte målkort præcist over mønstret på det kort, kameraet ser – ingen kalibrering. Hold hele kortet i billedet omkring midten (se Søg efter kortet), til det er fundet; derefter følges det, også delvist uden for billedet. Den yderste del af den hvide kant er altid kameraets eget kort. Fingerfølsomhed: højere = fingre over kortet findes lettere (for højt kan give huller i kortet).")
+        }
+    }
+
+    // MARK: Sløret opstart
+
+    private var warmupSection: some View {
+        Section {
+            Toggle("Sløret opstart", isOn: $s.warmupBlur)
+            if s.warmupBlur {
+                Picker("Højst", selection: $s.warmupMax) {
+                    ForEach(AppSettings.warmupChoices, id: \.self) { Text(String(format: "%g s", $0).replacingOccurrences(of: ".", with: ",")).tag($0) }
+                }
+                .pickerStyle(.segmented)
+            }
+            Picker("Markør: kortet er fundet", selection: $s.lockMarker) {
+                Text("Prik ved ⌄ (mere)").tag(LockMarker.moreDot)
+                Text("Prik ved Live").tag(LockMarker.liveDot)
+                Text("Lille vibration").tag(LockMarker.haptic)
+                Text("Ingen").tag(LockMarker.none)
+            }
+        } header: { Text("Sløret opstart") } footer: {
+            Text("Når appen åbnes, er søgeren sløret (som iPhonens kamera et øjeblik), mens kortet findes og dækkes. Sløringen forsvinder, så snart kortet er dækket, eller efter højst den valgte tid. Markøren: prikken forsvinder i det øjeblik, kortet er fundet og dækket – ses den stadig, når sløringen er væk, er kortet ikke dækket endnu. Hold kortet omkring midterfeltet i gitteret, til det er fundet.")
         }
     }
 

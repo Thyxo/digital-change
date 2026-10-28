@@ -39,6 +39,9 @@ struct TrackerConfig: Equatable {
     /// (lavere, så bevægelsesslør ikke taber kortet).
     var acceptScore = 0.6
     var keepScore = 0.42
+    /// Hvor kortets centrum skal ligge, når det findes første gang (billedets pixels). nil = hele billedet.
+    /// Følges kortet, må det bevæge sig frit.
+    var searchRegion: RectD?
 }
 
 /// Finder og følger det fysiske Rider Back-kort ved at lægge skabelonens mønster præcist ned over kameraets billede
@@ -136,8 +139,9 @@ final class CardTracker {
                 if !cands.isEmpty, let c = bestCandidate(cands, pyr: pyr), found == nil || c.0.score > found!.0.score + 0.03 { found = c }
             }
         } else {
-            // startgæt: blækkets farve (virker også når fingre dækker kanten) + Vision-firkanter
-            let cands = inkCandidates(image) + candidates
+            // startgæt: blækkets farve (virker også når fingre dækker kanten) + Vision-firkanter,
+            // kun omkring midten (søgeområdet) og nærmeste først
+            let cands = nearCenter(inkCandidates(image) + candidates)
             if !cands.isEmpty { found = bestCandidate(cands, pyr: pyr) }
         }
 
@@ -179,6 +183,16 @@ final class CardTracker {
 
     // MARK: Startgæt fra firkanter
 
+    /// Gæt med centrum i søgeområdet, sorteret efter afstand til områdets midte (færre gæt = hurtigere fund,
+    /// og fx en blå trøje i kanten af billedet forstyrrer ikke).
+    func nearCenter(_ cands: [Quad]) -> [Quad] {
+        guard let r = config.searchRegion else { return cands }
+        let c = r.center
+        return cands
+            .filter { let p = $0.centroid; return p.x >= r.minX && p.x <= r.maxX && p.y >= r.minY && p.y <= r.maxY }
+            .sorted { $0.centroid.distance(c) < $1.centroid.distance(c) }
+    }
+
     /// Gitter-søgning for et startgæt: drejning ±6°, størrelse ±8 % (om kortets centrum) og forskydning
     /// på et groft niveau (kortet ca. 40–80 px bredt). Returnerer den homografi, hvis mønster passer bedst.
     private func searchInit(_ h: Homography, pyr: [GrayImage]) -> Homography {
@@ -190,15 +204,20 @@ final class CardTracker {
         let tl = template.level(forPixelsPerUnit: cw * s / template.geometry.width)
         let g = template.geometry
         let cx = g.width / 2, cy = g.height / 2
-        var best = (h, -2.0)
+        // grov → fin: først forskydningen alene (drejning om centrum flytter ikke centrum), så drejning og størrelse
+        // med en lille forskydning omkring den. Ca. 5× hurtigere end hele gitteret med fuld forskydning.
+        let S = Homography.scale(s, s)
+        let (shifted, s0) = translationSearchScored(S * h * Ninv, cam: pyr[k], pts: points[tl], radius: 6)
+        let h0 = Homography.scale(1 / s, 1 / s) * shifted * N
+        var best = (h0, s0)
         for deg in [-6.0, -3, 0, 3, 6] {
-            for sc in [0.92, 0.96, 1.0, 1.04, 1.08] {
+            for sc in [0.92, 0.96, 1.0, 1.04, 1.08] where deg != 0 || sc != 1 {
                 let a = deg * .pi / 180
                 let ca = cos(a) * sc, sa = sin(a) * sc
                 // drejning + skalering om kortets centrum (kanoniske koordinater)
                 let R = Homography([ca, -sa, cx - ca * cx + sa * cy, sa, ca, cy - sa * cx - ca * cy, 0, 0, 1])
-                let Hn = Homography.scale(s, s) * h * R * Ninv
-                let (moved, score) = translationSearchScored(Hn, cam: pyr[k], pts: points[tl], radius: 6)
+                let Hn = S * h0 * R * Ninv
+                let (moved, score) = translationSearchScored(Hn, cam: pyr[k], pts: points[tl], radius: 2)
                 if score > best.1 { best = (Homography.scale(1 / s, 1 / s) * moved * N, score) }
             }
         }

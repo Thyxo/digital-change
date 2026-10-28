@@ -36,4 +36,6 @@ Tallene i `enum L` (CameraUI.swift) er målt på `ref/kamera-1.webp` og `ref/kam
 - **Tilstanden må aldrig gå tilbage til forklædt af sig selv** – kun via en genskab-metode, der er slået til. Automatisk genskab er fra som standard.
 - **Hemmelig zone** øverst til venstre (90×90 pt): 5 tryk inden for 2,5 sek. = menu, hold 1 sek. = panik. "Færdig" ignoreres i 1 sek. UI-testene tjekker det.
 - Kameraet leverer uspejlede portrætbilleder (`videoRotationAngle = 90`, `isVideoMirrored = false`); spejling sker kun i shaderen. Gemte billeder er uspejlede som standard.
+- **Sløret opstart** sker i Metal (`kp_blur`) på det *færdige* billede med målkortet – aldrig SwiftUI `.blur` på søgeren alene, ellers anes det blå kort som en klat, der skifter farve. Sløringen slipper kun på et *friskt* fund (`cardFresh`), ikke et kort, der holdes fra før baggrunden (`WarmupGate` i Logic).
+- **Søgeområdet** (`SearchArea`, gitteret i søgeren omregnet med zoom) gælder kun første fund; et kort, der følges, må bevæge sig frit.
 - `Engine` er `@MainActor`; arbejde fra andre køer går via `DispatchQueue.main.async { MainActor.assumeIsolated { … } }`.

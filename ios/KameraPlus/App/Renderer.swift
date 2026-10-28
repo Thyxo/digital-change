@@ -34,6 +34,13 @@ struct RenderUniforms {
     var seed: Float = 0
 }
 
+/// Skal matche `BlurUniforms` i Shaders.metal.
+struct BlurUniforms {
+    var lod: Float
+    var dim: Float
+    var texel: SIMD2<Float>
+}
+
 /// Hvad motoren vil have tegnet.
 struct EffectRenderState: Equatable {
     /// Forklædningen tegnes (det fysiske kort vises som målkortet).
@@ -51,6 +58,11 @@ final class Renderer: NSObject, MTKViewDelegate {
     let mailbox: FrameMailbox
     private var queue: MTLCommandQueue?
     private var pipelineState: MTLRenderPipelineState?
+    private var blurState: MTLRenderPipelineState?
+    /// Det færdige billede (med målkortet) til sløret opstart, med mipmaps.
+    private var blurSource: MTLTexture?
+    private var warmOn = false
+    private var warmOffAt: CFTimeInterval = 0
     private var textureCache: CVMetalTextureCache?
     private var visTexture: MTLTexture?
     private var emptyVis: MTLTexture?
@@ -88,6 +100,8 @@ final class Renderer: NSObject, MTKViewDelegate {
             d.fragmentFunction = lib.makeFunction(name: "kp_fragment")
             d.colorAttachments[0].pixelFormat = .bgra8Unorm
             pipelineState = try? device.makeRenderPipelineState(descriptor: d)
+            d.fragmentFunction = lib.makeFunction(name: "kp_blur")
+            blurState = try? device.makeRenderPipelineState(descriptor: d)
         }
         emptyVis = makeVisTexture(width: 1, height: 1)
         emptyVis?.replace(region: MTLRegionMake2D(0, 0, 1, 1), mipmapLevel: 0, withBytes: [UInt8(0), UInt8(128)], bytesPerRow: 2)
@@ -122,6 +136,29 @@ final class Renderer: NSObject, MTKViewDelegate {
         v.delegate = self
         view = v
         return v
+    }
+
+    /// Sløret opstart: hele søgerens billede (også målkortet) sløres og dæmpes lidt, som når iPhonens kamera åbner.
+    /// Slås den fra, skarpes billedet op over 0,3 sek.
+    func setWarmBlur(_ on: Bool) {
+        if on { warmOn = true } else if warmOn { warmOn = false; warmOffAt = CACurrentMediaTime() }
+    }
+
+    private var warmAmount: Float {
+        if warmOn { return 1 }
+        let t = Float((CACurrentMediaTime() - warmOffAt) / 0.3)
+        guard t < 1 else { return 0 }
+        let k = 1 - max(0, t)
+        return k * k * (3 - 2 * k)
+    }
+
+    private func blurTarget(width: Int, height: Int) -> MTLTexture? {
+        if let t = blurSource, t.width == width, t.height == height { return t }
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: true)
+        d.usage = [.renderTarget, .shaderRead]
+        d.storageMode = .private
+        blurSource = device?.makeTexture(descriptor: d)
+        return blurSource
     }
 
     private func updateRate() {
@@ -234,19 +271,47 @@ final class Renderer: NSObject, MTKViewDelegate {
         guard let queue, let rpd = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
               let cb = queue.makeCommandBuffer() else { return }
         rpd.colorAttachments[0].loadAction = .clear
-        guard let enc = cb.makeRenderCommandEncoder(descriptor: rpd) else { return }
         var keep: CVMetalTexture?
+        let amount = warmAmount
         if let f = mailbox.latest, let ct = cameraTexture(f.pixelBuffer) {
             let tex = ct.0
             keep = ct.1
             uploadVis(f)
-            encode(enc, camera: tex, uniforms: uniforms(f, mirrored: mirror, capture: false))
+            let u = uniforms(f, mirrored: mirror, capture: false)
+            if amount > 0.001, let blurState, let src = blurTarget(width: drawable.texture.width, height: drawable.texture.height) {
+                // 1) det færdige billede (kamera + målkort) → 2) mipmaps → 3) sløret på skærmen
+                let first = MTLRenderPassDescriptor()
+                first.colorAttachments[0].texture = src
+                first.colorAttachments[0].loadAction = .dontCare
+                first.colorAttachments[0].storeAction = .store
+                if let enc = cb.makeRenderCommandEncoder(descriptor: first) {
+                    encode(enc, camera: tex, uniforms: u)
+                    enc.endEncoding()
+                }
+                if let blit = cb.makeBlitCommandEncoder() {
+                    blit.generateMipmaps(for: src)
+                    blit.endEncoding()
+                }
+                if let enc = cb.makeRenderCommandEncoder(descriptor: rpd) {
+                    var b = BlurUniforms(lod: 5.5 * amount, dim: 1 - 0.25 * amount,
+                                         texel: SIMD2(1 / Float(src.width), 1 / Float(src.height)))
+                    enc.setRenderPipelineState(blurState)
+                    enc.setFragmentTexture(src, index: 0)
+                    enc.setFragmentBytes(&b, length: MemoryLayout<BlurUniforms>.stride, index: 0)
+                    enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+                    enc.endEncoding()
+                }
+            } else if let enc = cb.makeRenderCommandEncoder(descriptor: rpd) {
+                encode(enc, camera: tex, uniforms: u)
+                enc.endEncoding()
+            }
             if let rec = recorder, f.serial != recordedSerial {
                 recordedSerial = f.serial
                 record(f, camera: tex, recorder: rec, commandBuffer: cb)
             }
+        } else if let enc = cb.makeRenderCommandEncoder(descriptor: rpd) {
+            enc.endEncoding()
         }
-        enc.endEncoding()
         cb.present(drawable)
         let hold = keep
         cb.addCompletedHandler { _ in _ = hold }
