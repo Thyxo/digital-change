@@ -1,1 +1,41 @@
-{"name":"KameraPlus","apps":[{"versions":[]}]}
+{
+  "name": "KameraPlus",
+  "identifier": "dk.thyxo.kameraplus.source",
+  "subtitle": "Kamera",
+  "description": "KameraPlus-kilde – opdateres automatisk ved hver ny build.",
+  "iconURL": "https://raw.githubusercontent.com/Thyxo/digital-change/main/ios/KameraPlus/Assets.xcassets/AppIcon.appiconset/icon-1024.png",
+  "website": "https://github.com/Thyxo/digital-change",
+  "tintColor": "#FEF657",
+  "apps": [
+    {
+      "name": "KameraPlus",
+      "bundleIdentifier": "dk.thyxo.kameraplus",
+      "developerName": "Thyxo",
+      "subtitle": "Kamera",
+      "localizedDescription": "Magi-rekvisit: et kamera, der ligner iPhones eget, med en skjult effekt (Digital Flap).",
+      "iconURL": "https://raw.githubusercontent.com/Thyxo/digital-change/main/ios/KameraPlus/Assets.xcassets/AppIcon.appiconset/icon-1024.png",
+      "tintColor": "#FEF657",
+      "category": "entertainment",
+      "screenshots": [],
+      "versions": [
+        {
+          "version": "1.0.5",
+          "buildVersion": "5",
+          "date": "2026-10-28T10:11:49Z",
+          "localizedDescription": "Build 5",
+          "downloadURL": "https://github.com/Thyxo/digital-change/releases/download/build-5/KameraPlus.ipa",
+          "size": 547414,
+          "minOSVersion": "17.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {
+          "NSCameraUsageDescription": "Kameraet bruges til at tage billeder.",
+          "NSPhotoLibraryAddUsageDescription": "Billeder kan gemmes i Fotos."
+        }
+      }
+    }
+  ],
+  "news": []
+}
