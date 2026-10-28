@@ -52,7 +52,8 @@ jobs:
           c.sort(key=lambda t:(int(t[0].split('iOS-')[1].split('-')[0]), -(pref.index(t[1]['name']) if t[1]['name'] in pref else 99)))
           print(c[-1][1]['udid']); print(c[-1][0], c[-1][1]['name'], file=sys.stderr)")
           rc=0
-          xcodebuild test -project KameraPlus.xcodeproj -scheme KameraPlus -destination "id=$UDID" \
+          # Release-byg (som IPA'en): Debug-bygget er for langsomt til 5 tryk på 2,5 sek. lige efter start
+          xcodebuild test -project KameraPlus.xcodeproj -scheme KameraPlus -configuration Release -destination "id=$UDID" \
             CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO > uitest.log 2>&1 || rc=$?
           grep -E "Test Case|error:|failed|TEST SUCCEEDED|TEST FAILED" uitest.log | tail -n 60 || true
           [ $rc -eq 0 ] || tail -n 80 uitest.log

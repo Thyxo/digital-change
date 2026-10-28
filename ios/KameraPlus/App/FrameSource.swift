@@ -194,7 +194,7 @@ final class SyntheticSource: FrameSource, @unchecked Sendable {
         isRunning = true
         t0 = CACurrentMediaTime()
         let t = DispatchSource.makeTimerSource(queue: q)
-        t.schedule(deadline: .now(), repeating: 1.0 / 20)
+        t.schedule(deadline: .now(), repeating: 1.0 / 15)
         t.setEventHandler { [weak self] in self?.tick() }
         t.resume()
         timer = t

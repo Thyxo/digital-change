@@ -10,6 +10,7 @@ final class SecretMenuUITests: XCTestCase {
         app.launchArguments = ["-effectActive", "YES", "-testVideo", "YES"]
         app.launch()
         _ = app.buttons["shutter"].waitForExistence(timeout: 10)
+        sleep(2)   // lad appen falde til ro efter start (farvetabeller bygges i baggrunden)
     }
 
     private var topLeft: XCUICoordinate { app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.03)) }
@@ -26,7 +27,7 @@ final class SecretMenuUITests: XCTestCase {
     /// 5 hurtige tryk – med op til 3 forsøg, hvis simulatoren er langsom.
     private func openMenu() {
         var opened = false
-        for _ in 0..<3 where !opened {
+        for _ in 0..<4 where !opened {
             tap(topLeft, times: 5)
             opened = done.waitForExistence(timeout: 4)
             if !opened { sleep(3) }
@@ -60,6 +61,7 @@ final class SecretMenuUITests: XCTestCase {
         app.launchArguments += ["-doneDelay", "4"]
         app.launch()
         _ = app.buttons["shutter"].waitForExistence(timeout: 10)
+        sleep(2)
         openMenu()
         done.tap()
         XCTAssertTrue(done.waitForExistence(timeout: 1), "Færdig lukkede menuen i spærretiden")
