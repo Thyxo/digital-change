@@ -109,10 +109,11 @@ Ikonerne drejer med telefonen (CoreMotion, blød animation). FOTO/VIDEO følger 
 
 ## 6. Kendte begrænsninger
 
-- **Ikke testet på fysisk iPhone.** Især: kamerabilledets retning/spejling (vinkel 90°), Vision-firkanten på et rigtigt kort, hvor stærkt skærmens lys farver kortet, og om 30 fps holder på iPhone 12.
+- **Ikke testet på fysisk iPhone.** Testvideoen er syntetisk. Tjek især: kamerabilledets retning/spejling (vinkel 90°), Vision-firkanten på et rigtigt kort, hvor stærkt skærmens lys farver kortet, og om 30 fps holder på iPhone 12.
 - **Fingre over kortet:** fingre farves aldrig om, men dækker de det meste af kortet, kan masken tabe det.
 - **Stærk refleks** på kortet (blankt lys) bliver hvidt og skiftes ikke.
 - **Meget svagt lys:** støj og lav mætning gør farvemodellen usikker. Kalibrér i optrædenslyset.
+- **iPhone SE** (16:9 uden Face ID): layoutet skaleres ned med sorte kanter i siderne, fordi målene er taget på en 19,5:9-skærm. Den hemmelige zone sidder stadig i skærmens hjørne.
 - **Kort der bevæger sig hurtigt:** masken følger med (hurtig op, 4 billeders hold), men meget hurtige bevægelser kan give en kort kant i ægte farve.
 - **Omvendt tilstand** (rødt kort vist som blåt): lys/rosa hud ligger tæt på et rødt kort i lav opløsning. Huden farves aldrig, men kan i op til ca. 5 % af tilfældene tælles som "kort set" (selvtest). Brug *Lær baggrund* med hånden i billedet.
 - **App-ikonet** er tegnet (Kamera-agtigt), fordi `ref/hjemmeskaerm.png` mangler. Læg dit hjemmeskærm-screenshot i `ref/` og kør `python3 scripts/extract-icons.py --icon x,y,størrelse`.
@@ -145,7 +146,9 @@ Største ændring af hud: ΔE 0,00
 ```
 Omvendt (1.500 billeder): IoU 0,977, 0 % misset, 4,8 % falske positiver, hud ΔE 0,00.
 
-**UI-tests** (`ios/KameraPlusUITests`, simulator med testvideo): 5 tryk øverst til venstre åbner menuen, 4 tryk gør ikke, 5 tryk over 3 sek. gør ikke, 5 tryk øverst til højre gør intet, "Færdig" ignoreres første sekund, panik slår effekten fra. CI fejler på røde tests.
+**UI-tests** (`ios/KameraPlusUITests`, iPhone 17 Pro-simulator med iOS 26.2, Release-byg, testvideo i stedet for kamera) – **6 tests, alle grønne**: 5 tryk øverst til venstre åbner menuen, 4 tryk gør ikke, 5 tryk over 3 sek. gør ikke, 5 tryk øverst til højre gør intet, "Færdig" ignoreres i spærretiden (testen forlænger den til 4 sek. med `-doneDelay`, fordi simulatoren er for langsom til at ramme 1 sek. præcist), panik (hold 1,4 sek.) slår effekten fra. CI fejler på røde tests.
+
+**Ikke testet automatisk:** selve kameraet (AVFoundation), Vision på rigtige kort, Metal-billedet på en rigtig skærm, lukker/galleri/video og volumenknapper – det kræver en fysisk iPhone.
 
 ---
 
