@@ -14,7 +14,16 @@ jobs:
   build:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      # Kun indbyggede værktøjer (repoets politik tillader ikke actions fra andre end Thyxo)
+      - name: Checkout
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          git init -q .
+          git remote add origin "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}.git"
+          git fetch -q --depth 20 origin "${{ github.ref_name }}"
+          git checkout -q -B "${{ github.ref_name }}" FETCH_HEAD
+          git log --oneline -1
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -72,20 +81,16 @@ jobs:
           zip -qry KameraPlus.ipa Payload
           ls -lh KameraPlus.ipa
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: KameraPlus-ipa
-          path: ios/KameraPlus.ipa
-
       - name: Publish release
         if: github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: build-${{ github.run_number }}
-          name: KameraPlus 1.0.${{ github.run_number }}
-          body: "Usigneret IPA. Installér via SideStore-kilden, AltStore eller Sideloadly (gratis Apple ID)."
-          files: ios/KameraPlus.ipa
-          make_latest: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "build-${{ github.run_number }}" ios/KameraPlus.ipa \
+            --repo "${{ github.repository }}" --target "${{ github.sha }}" \
+            --title "KameraPlus 1.0.${{ github.run_number }}" \
+            --notes "Usigneret IPA. Installér via SideStore-kilden, AltStore eller Sideloadly (gratis Apple ID)." \
+            --latest
 
       - name: Update SideStore source
         if: github.ref == 'refs/heads/main'
