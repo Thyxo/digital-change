@@ -286,6 +286,7 @@ struct Glyph: View {
 
 struct TopPill: View {
     @EnvironmentObject var engine: Engine
+    @EnvironmentObject var settings: AppSettings
     let s: CGFloat
 
     var body: some View {
@@ -304,10 +305,24 @@ struct TopPill: View {
             }
             icon(2) { engine.liveOn.toggle() } content: {
                 Glyph(name: "glyph-live-auto", size: L.topGlyph * s, color: engine.liveOn ? L.yellow : .white)
+                    .overlay(alignment: .topTrailing) { markerDot(.liveDot) }
             }
             icon(3) { withAnimation(.easeInOut(duration: 0.2)) { engine.moreOpen.toggle() } } content: {
                 Glyph(name: "glyph-more", size: L.topGlyph * s, color: engine.moreOpen ? L.yellow : .white)
+                    .overlay(alignment: .topTrailing) { markerDot(.moreDot) }
             }
+        }
+    }
+
+    /// Hemmelig markør: en lille prik i ikonets øverste højre hjørne, der forsvinder, når kortet er fundet og dækket.
+    @ViewBuilder
+    private func markerDot(_ m: LockMarker) -> some View {
+        if settings.lockMarker == m {
+            Circle().fill(Color.white)
+                .frame(width: 3.5 * s, height: 3.5 * s)
+                .offset(x: -2 * s, y: 2 * s)
+                .opacity(engine.markerShown ? 0.9 : 0)
+                .allowsHitTesting(false)
         }
     }
 

@@ -84,6 +84,18 @@ jobs:
             --notes "Usigneret IPA. Installér via SideStore-kilden, AltStore eller Sideloadly (gratis Apple ID)." \
             --latest
 
+      # Andre branches (fx manuelt startet): IPA som test-pre-release, SideStore-kilden røres ikke
+      - name: Publish test build
+        if: github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "test-${{ github.run_number }}" ios/KameraPlus.ipa \
+            --repo "${{ github.repository }}" --target "${{ github.sha }}" \
+            --title "Test 1.0.${{ github.run_number }} (${{ github.ref_name }})" \
+            --notes "Usigneret test-IPA fra ${{ github.ref_name }}. Ikke i SideStore-kilden – installér filen direkte (SideStore/AltStore/Sideloadly)." \
+            --prerelease
+
       - name: Update SideStore source
         if: github.ref == 'refs/heads/main'
         run: |

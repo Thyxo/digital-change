@@ -54,6 +54,8 @@ final class Engine: ObservableObject, PipelineDelegate {
     @Published private(set) var blink = 0.0
     @Published private(set) var frontFlash = 0.0
     @Published private(set) var cameraDenied = false
+    /// Hemmelig markør: prikken vises, indtil kortet er fundet og dækket (efter åbning).
+    @Published private(set) var markerShown = false
 
     // Menu
     @Published var panelOpen = false { didSet { if panelOpen != oldValue { panelChanged() } } }
@@ -85,6 +87,7 @@ final class Engine: ObservableObject, PipelineDelegate {
     /// De ægte Rider Back-skabeloner (ios/Cards i app-bundtet).
     let templates: CardTemplates?
     private var sourceColor: CardColor?
+    private var warmup = WarmupGate()
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -123,6 +126,7 @@ final class Engine: ObservableObject, PipelineDelegate {
         motion.start()
         volume.activate()
         chooseSource()
+        beginWarmup()
     }
 
     func scenePhase(_ p: ScenePhase) {
@@ -131,6 +135,7 @@ final class Engine: ObservableObject, PipelineDelegate {
             guard started else { return }
             // "Altid forklædt, når appen åbnes" – kun efter baggrund (ikke kontrolcenter/notifikationer)
             if wasInBackground && settings.has(.onLaunch) && state.restore(.onLaunch) { updateRenderEffect() }
+            if wasInBackground { beginWarmup() }
             wasInBackground = false
             volume.activate()
             motion.start()
@@ -188,6 +193,7 @@ final class Engine: ObservableObject, PipelineDelegate {
         updatePipelineConfig()
         updateRenderEffect()
         applyCards()
+        if !settings.warmupBlur { handleWarmup(warmup.cancel()) } else { updateMarker() }
         if started {
             let wantSynthetic = useSynthetic
             if wantSynthetic != (source === synthetic) { chooseSource() }
@@ -224,7 +230,42 @@ final class Engine: ObservableObject, PipelineDelegate {
             shake: settings.has(.shakeCard),
             shakeSensitivity: settings.shakeSensitivity,
             occlusionSensitivity: settings.occlusionSensitivity,
-            wantPreview: panelOpen))
+            wantPreview: panelOpen,
+            searchArea: settings.searchArea,
+            zoom: zoomFactor))
+    }
+
+    // MARK: Sløret opstart
+
+    /// Søgeren sløres, indtil kortet er fundet og dækket (højst `warmupMax` sek. fra første billede).
+    /// Kun når forklædningen skal tegnes – ellers er det bare et almindeligt kamera.
+    private func beginWarmup() {
+        guard settings.warmupBlur, settings.effectActive, isFront, state.phase.isDisguised else {
+            handleWarmup(warmup.cancel())
+            return
+        }
+        warmup.maxSeconds = settings.warmupMax
+        warmup.begin()
+        // et kort, der kun "holdes" fra før baggrunden, må ikke tælle som fundet
+        pipeline.resetTracking()
+        renderer.setWarmBlur(true)
+        updateMarker()
+    }
+
+    private func handleWarmup(_ events: [WarmupEvent]) {
+        for e in events {
+            switch e {
+            case .unblur: renderer.setWarmBlur(false)
+            case .locked: if settings.lockMarker == .haptic { haptics.select() }
+            }
+        }
+        updateMarker()
+    }
+
+    private func updateMarker() {
+        let dot = settings.lockMarker == .moreDot || settings.lockMarker == .liveDot
+        let shown = dot && warmup.markerShown
+        if markerShown != shown { withAnimation(.easeOut(duration: 0.12)) { markerShown = shown } }
     }
 
     /// Hvad visningen skal tegne lige nu.
@@ -247,6 +288,11 @@ final class Engine: ObservableObject, PipelineDelegate {
     func pipelineDidAnalyze(_ s: PipelineSummary) {
         cardVisible = s.cardVisible
         state.noteCard(visible: s.cardVisible, at: s.time)
+        if settings.effectActive && isFront {
+            handleWarmup(warmup.update(covered: s.cardFresh && renderer.effect.disguise, at: s.time))
+        } else {
+            handleWarmup(warmup.cancel())
+        }
         for e in state.tick(now: CACurrentMediaTime()) {
             if case .restored(let m) = e {
                 haptics.restored()
@@ -419,6 +465,7 @@ final class Engine: ObservableObject, PipelineDelegate {
     func toggleExpanded() {
         withAnimation(.easeInOut(duration: 0.25)) { expanded.toggle() }
         renderer.zoom = zoomFactor
+        updatePipelineConfig()
     }
 
     func flipCamera() {
@@ -443,6 +490,7 @@ final class Engine: ObservableObject, PipelineDelegate {
             cam.setFront(!cam.isFront) { [weak self] in
                 self?.isFront = cam.isFront
                 finish()
+                self?.beginWarmup()
             }
         } else {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { MainActor.assumeIsolated { finish() } }

@@ -42,6 +42,14 @@ final class AppSettings: ObservableObject {
     @Published var grain: Double { didSet { d.set(grain, forKey: "grain") } }
     @Published var lockExposure: Bool { didSet { d.set(lockExposure, forKey: "lockExposure") } }
     @Published var showMask: Bool { didSet { d.set(showMask, forKey: "showMask") } }
+    /// Hvor kortet ledes efter første gang (i søgerens gitter).
+    @Published var searchArea: SearchArea { didSet { d.set(searchArea.rawValue, forKey: "searchArea") } }
+
+    // Sløret opstart
+    /// Søgeren er sløret ved åbning, indtil kortet er fundet og dækket (højst `warmupMax` sek.).
+    @Published var warmupBlur: Bool { didSet { d.set(warmupBlur, forKey: "warmupBlur") } }
+    @Published var warmupMax: Double { didSet { d.set(warmupMax, forKey: "warmupMax") } }
+    @Published var lockMarker: LockMarker { didSet { d.set(lockMarker.rawValue, forKey: "lockMarker") } }
 
     // Kamera-realisme
     @Published var grid: Bool { didSet { d.set(grid, forKey: "grid") } }
@@ -56,6 +64,7 @@ final class AppSettings: ObservableObject {
 
     static let defaultTriggers: Set<TriggerSource> = [.tapCard]
     static let defaultRestores: Set<RestoreMethod> = [.menuButton, .hiddenZoneHold, .onLaunch]
+    static let warmupChoices: [Double] = [1, 1.5, 2, 3]
 
     init() {
         d.register(defaults: [
@@ -65,6 +74,8 @@ final class AppSettings: ObservableObject {
             "shakeSensitivity": ShakeSensitivity.normal.rawValue,
             "restores": AppSettings.defaultRestores.map(\.rawValue), "autoRestoreSeconds": 5.0, "wasRevealed": false,
             "occlusionSensitivity": 0.5, "blur": 0.35, "grain": 0.35, "lockExposure": true, "showMask": false,
+            "searchArea": SearchArea.aroundMiddle.rawValue, "warmupBlur": true, "warmupMax": 1.5,
+            "lockMarker": LockMarker.moreDot.rawValue,
             "grid": true, "level": true, "mirrorViewfinder": true, "mirrorSaved": false, "focusSquare": true,
             "shutterSound": true, "shutterBlink": true, "saveToPhotos": false, "testVideo": false,
         ])
@@ -83,6 +94,10 @@ final class AppSettings: ObservableObject {
         grain = min(1, max(0, d.double(forKey: "grain")))
         lockExposure = d.bool(forKey: "lockExposure")
         showMask = d.bool(forKey: "showMask")
+        searchArea = SearchArea(rawValue: d.string(forKey: "searchArea") ?? "") ?? .aroundMiddle
+        warmupBlur = d.bool(forKey: "warmupBlur")
+        warmupMax = AppSettings.warmupChoices.contains(d.double(forKey: "warmupMax")) ? d.double(forKey: "warmupMax") : 1.5
+        lockMarker = LockMarker(rawValue: d.string(forKey: "lockMarker") ?? "") ?? .moreDot
         grid = d.bool(forKey: "grid")
         level = d.bool(forKey: "level")
         mirrorViewfinder = d.bool(forKey: "mirrorViewfinder")
@@ -121,5 +136,9 @@ final class AppSettings: ObservableObject {
         grain = 0.35
         lockExposure = true
         showMask = false
+        searchArea = .aroundMiddle
+        warmupBlur = true
+        warmupMax = 1.5
+        lockMarker = .moreDot
     }
 }
