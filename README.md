@@ -1,6 +1,8 @@
-# KameraPlus – kamera med skjult farveskift (Digital Flap)
+# KameraPlus – kamera med skjult kortskift (Digital Flap)
 
-Native iPhone-app (SwiftUI, iOS 17+), der ser ud og opfører sig som iPhones **Kamera** med frontkameraet. I hemmelighed kan den vise et blåt spillekort som rødt – live – og afsløre den ægte blå farve, når du trykker på kortet. For alle andre er det bare et kamera. Visningsnavn: **Kamera**.
+Native iPhone-app (SwiftUI, iOS 17+), der ser ud og opfører sig som iPhones **Kamera** med frontkameraet. I hemmelighed viser den et blåt **Bicycle Rider Back**-kort som det røde Rider Back – live – og afslører det ægte blå kort, når du trykker på det. For alle andre er det bare et kamera. Visningsnavn: **Kamera**.
+
+Appen bruger **de ægte kortdesigns** (dine to referencebilleder), ikke en farveomregning eller en tegnet efterligning: appen finder det fysiske korts mønster i kamerabilledet med subpixel-præcision og lægger det ægte røde kortbillede præcist oven på.
 
 > Ikke testet på en fysisk iPhone endnu. Logikken er testet automatisk (se *Hvad er testet*), og appen bygges og UI-testes i simulatoren på GitHub. Se *Kendte begrænsninger*.
 
@@ -18,14 +20,22 @@ Første start: giv adgang til kameraet. "Gem i Fotos" spørger først, når du s
 
 **Branches:** push til `dev` = test + build (ingen release). Push til `main` = release + ny SideStore-version. CI bruger kun `git` og `gh` (repoets Actions-politik tillader kun handlinger ejet af Thyxo).
 
-**Demo på computeren:** https://digital-flap-demo.vercel.app (WebGL + webcam, `demo/index.html`). Samme farveskift og overgange, så du kan vælge udseende og parametre. Vercel-projektet *digital-flap-demo* udgiver mappen `demo/` ved hvert push til produktions-branchen.
+**Demo på computeren:** https://digital-flap-demo.vercel.app (WebGL, `demo/index.html`): de to ægte kortbilleder på et bord med perspektiv, samme overlay-område og overgange som appen, plus kontrolvisninger (ternet, gardin, blink), hvor du kan se, at rødt og blåt flugter. Vercel-projektet *digital-flap-demo* udgiver mappen `demo/` ved hvert push til produktions-branchen.
 
-**Før første optræden (3 trin i menuen → Kalibrering):**
-1. **Lær rødt kort** – hold et kort fra det røde spil 2–5 cm over kameraet i 3 sek.
-2. **Lær blåt kort** – samme med det blå kort.
-3. **Lær baggrund** – vis hånden og rummet uden kort i 3 sek. (anbefales især i omvendt tilstand).
+**Ingen kalibrering.** Appen kender begge bagsider. Brug kun Bicycle Rider Back (standard, rød og blå).
 
-Uden kalibrering bruges rød `#B3202A` og blå `#1E3F8F`.
+---
+
+## Kortbillederne
+
+`scripts/prepare-cards.py` laver de to kortbilleder i `ios/Cards/` (og `demo/`) ud fra `ref/rider-blue.jpg` og `ref/rider-red.jpg`. Ingen pixels tegnes – hvert pixel er en prøve af dit originalfoto, kun flyttet geometrisk:
+
+1. **Blåt kort (scanning):** venstre-, højre- og topkant målt med subpixel-præcision (spredning 0,12–0,28 px); scanningen er drejet ca. 0,6°. Bunden er beskåret i scanningen og sat ud fra mønstrets 180°-symmetri (usikkerhed 1–3 px af 717). Hjørneradius målt langs diagonalen (27–31 px). Rettet op til et kanonisk kort på **1024×1424 px** (scanningens egne proportioner, 0,719).
+2. **Rødt kort (produktfoto):** registreret på selve mønstret (ECC på lysstyrke – JPEG'ens farver er kun halv opløsning – homografi, grov → fin) plus en blød 3.-grads korrektion af fotoets resterende forvrængning. **Rest mellem rødt og blåt mønster: gns. 0,22 px, 90 % under 0,47 px, maks. 0,78 px** (i scanningens pixels, målt i 459 felter). Korrelation 0,98.
+3. **Hvid baggrund fjernet** (alfa = kortets afrundede omrids, antialiaseret). Scannerens skyggelinje langs den blå kant, og den yderste kant på det røde (produktfotoet har smallere kant end det fysiske kort), er fyldt ved at spejle kortets egen papirstruktur ind fra kanten.
+4. **Samme papirhvidt** i begge (blækket er uændret i forhold til papiret).
+
+Kontrolbillede: `ref/rider-check.png` (blå | rød | ternet blanding | forskel). Målingerne står i `ios/Cards/rider.json`.
 
 ---
 
@@ -35,12 +45,12 @@ Uden kalibrering bruges rød `#B3202A` og blå `#1E3F8F`.
 
 | Sektion | Indhold |
 |---|---|
-| Top | Statusmærke **KLAR / FRA / INTET KORT / KALIBRERER** (+ AFSLØRET), live-forhåndsvisning med maske, fps, maske-procent, skærmlys k, **Effekt aktiv**, *Genskab forklædning nu* |
+| Top | Statusmærke **KLAR / FRA / INTET KORT** (+ AFSLØRET), live-forhåndsvisning med sporing (hvidt omrids, grønt = her tegnes målkortet, magenta = finger), fps, match %, dækket %, ms pr. billede, **Effekt aktiv**, *Genskab forklædning nu* |
 | Effekt | Forklædning (*Blå vises som rødt* = standard / *Rød vises som blåt*), trigger (Tryk på kortet = standard, Ryst kortet, Tryk hvor som helst, Volumen op, Skjult zone – kan kombineres), ryst-følsomhed (let/normal/hård) med live-måler, overgang, varighed, kantblødhed, **Test afsløring** |
 | Genskab forklædning | Én kontakt pr. metode: knap i menuen, skjult zone nederst til venstre (hold 1 sek.), volumen ned, ryst telefonen, dobbelttryk på lukkeren, automatisk efter 3/5/10 sek. uden kort (standard **fra**), altid forklædt når appen åbnes |
-| Kalibrering | Vejledning i 3 trin, Lær rødt/blåt kort, Lær baggrund, følsomhed, geometri (Vision) til/fra, lås eksponering og hvidbalance, vis maske, nulstil til standard |
+| Kort og sporing | Fingerfølsomhed, uskarphed på kortet (så det passer til kameraets skarphed), korn, lås eksponering og hvidbalance, vis sporing, nulstil til standard |
 | Kamera-realisme | Gitter, vaterlinje, spejl søger, spejl gemte billeder, fokusfirkant, lukkerlyd, lukkerblink, gem i Fotos, testvideo i stedet for kamera |
-| Log og selvtest | Seneste tryk (tid, ramte kort ja/nej, hvad der blev vist) og randomiseret selvtest (5.000 billeder) |
+| Log og selvtest | Seneste tryk (tid, ramte kort ja/nej, hvad der blev vist) og randomiseret selvtest (300 billeder med de ægte kort) |
 | PANIK | Rød knap |
 
 **Valg jeg har truffet (ret dem gerne):**
@@ -53,8 +63,8 @@ Uden kalibrering bruges rød `#B3202A` og blå `#1E3F8F`.
 
 ## 3. Forløbet
 
-1. Telefonen ligger med skærmen op. Hold det **blå** kort 2–5 cm over frontkameraet (eller på linsen).
-2. Skærmen viser kortet som **rødt** (forklædt). Fingre, hud, baggrund og røde kort er urørte.
+1. Telefonen ligger med skærmen op. Hold det **blå** kort over frontkameraet, så **hele kortet** er i billedet, til det er fundet (typisk under et halvt sekund). Derefter følges det også delvist uden for billedet.
+2. Skærmen viser kortet som det **røde** Rider Back (forklædt). Fingre over kortet, baggrund og andre ting er urørte.
 3. **Tryk på kortet** på skærmen → forklædningen slukkes med en bølge fra fingeren (0,5 sek.), og den ægte blå farve kommer frem. Tryk ved siden af kortet giver kun den gule fokusfirkant.
 4. Afsløret bliver ved, også når kortet forlader billedet, vendes eller dækkes – indtil du genskaber forklædningen.
 
@@ -67,16 +77,14 @@ Er der intet kort i billedet, sker der intet ved tryk (kun fokus).
 **Kamera:** AVCaptureSession, frontkamera i 4:3 (helst 1440×1080, 30 fps), BGRA, `alwaysDiscardsLateVideoFrames`, portræt, uspejlet. Søgeren spejles i Metal (som Apples frontkamera); gemte billeder er uspejlede som standard.
 
 **Pr. billede (seriel kø):**
-1. Nedskalering 4×4 → ca. 270×360 (blander mønstret til en jævn farve og dæmper støj).
-2. **Farvemodel i Lab:** Gauss-model (middel + kovarians) af kortet, Mahalanobis-grænse (følsomhed), krav om kromatisk mætning (≥ halvdelen af kortets), farvetone-vindue og **hudbeskyttelse** (farvetone 40–80°, der aldrig regnes for kort ved rødt kildekort). Evt. lært baggrund undertrykker farver, der er almindelige uden kort. Hele modellen ligger i en 64³-opslagstabel.
-3. **Skærmens lys:** skærmen lyser selv kortet op nedefra – rødt mens forklædningen vises, blåt efter. Det flytter kortets farve meget (et lavmættet blåt kort kan flytte 40° i farvetone). Lyset beskrives med ét tal *k* langs den fysisk mulige retning (målfarvens eller kildens lys), og *k* vælges pr. billede, så kortets egne pixels passer bedst. Farven normaliseres før modellen, og lyset lægges på igen efter farveskiftet (von Kries). Uden kort søges kun i kildens lys (søgeren viser aldrig forklædningen uden kort).
-4. **Maske:** udglatning i tid (hurtig op, langsom ned – ingen blå forkant på et kort i bevægelse), hysterese, morfologisk lukning/åbning, sammenhængende områder (største + naboer, så en finger kan dele kortet), Vision-firkant som rumligt prior, og over 70 % dækning = hele billedet er kortet. Masken holdes i 4 billeder ved udfald og tones så ud (ingen blink).
-5. **Geometri:** `VNDetectRectanglesRequest` (billedformat 0,64–0,80, kvadratur 20°, min. størrelse 0,12) ca. 15 Hz når et kort ses (3 Hz ellers) og `VNTrackRectangleRequest` imellem. Firkanten bruges kun, hvis mindst 35 % af den er kortfarvet.
+1. Nedskalering til ca. 540×720 (fra 1440×1080).
+2. **Startgæt:** Vision (`VNDetectRectanglesRequest`, 10 Hz når kortet ikke følges sikkert, ellers 2 Hz) giver kortets firkant. Begge 180°-drejninger prøves.
+3. **Mønster-sporing** (`CardTracker`): det ægte blå Rider Back (256 px skabelon, samme pixels som PNG'en) lægges ned over kamerabilledet med en **homografi** (perspektiv), fundet med Lucas–Kanade på lysstyrke, grov → fin over 3–4 pyramide-niveauer, med lys-forstærkning og Huber-vægte, så fingre og blænding ikke trækker. Hurtig bevægelse: forskydningssøgning på et groft niveau først. Kortet godtages kun ved korrelation ≥ 0,6 med mønstret og rigtig farve (et rødt kort, en bog eller et billede afvises). Holdes i 4 billeder ved udfald.
+4. **Lys:** kamera ≈ forstærkning pr. kanal × skabelon + én fælles forskydning (lineært lys), målt på kortet hvert billede (fanger rummets lys og skærmens røde/blå lys på kortet). Samme lys bruges på målkortet. Lokal lysstyrke (skygge fra hånden) måles også.
+5. **Fingre:** hver pixel på kortet sammenlignes med den forventede farve fra skabelonen (farvetone, så skygger ikke tæller; tåler 1 pixels fejl). Det, der ikke passer, er noget over kortet – der vises kameraets eget billede.
 6. Eksponering og hvidbalance låses, når kortet er set i 5 billeder, og frigøres efter 1,5 sek. uden kort.
 
-**Farveskift (min forbedring af din formel):** din Reinhard-overførsel (L' = μL_mål + (L − μL_kilde)·k, k = σ_mål/σ_kilde begrænset til 0,7–1,4; (a,b) flyttet fra kilde til mål) er **forankret i papirhvidt** i stedet for kortets middelfarve. Et trykt kort er blæk på hvidt papir: hver pixel er en blanding, og blæk-andelen *w* styrer, hvor meget L flyttes, mens (a,b) roteres/skaleres om den grå akse, så kildens middelfarve rammer målets præcist. Derfor bliver **hvid kant, mønstrets hvide streger, skygger og hud urørte**, og mønstrets lysforløb bevares (korrelation > 0,99 i testen). A = Σ_mål^½·Σ_kilde^−½ er erstattet af rotation+skalering, fordi kortets farver ligger på en linje fra papir til blæk. Overførslen ligger i en **65³ 3D-tabel** (gns. ΔE 0,3 mod den direkte beregning), som shaderen slår op i – så Swift-koden, der testes, er præcis det, der vises.
-
-**Visning:** Metal (MTKView, CVMetalTextureCache, nul-kopi). Shaderen: kamera → (forklædning i masken) → afsløringens overgang → skærm. Kantens finhed følger kortets egne farvekanter i fuld opløsning (tabellen ændrer kun kortfarver), så masken i lav opløsning kun skal dække kortet.
+**Visning:** Metal (MTKView, CVMetalTextureCache, nul-kopi). Shaderen: kamera → **det ægte røde kort** (1024 px PNG med mipmaps) slået op gennem homografien → kameraets lys og skygge → fingermaske → afsløringens overgang → skærm. Det tegnes over mønstret og den inderste halvdel af den hvide kant; **den yderste halvdel af kanten er altid det fysiske kort**, fordi rigtige kort er skåret lidt forskelligt (hvidt mod hvidt kan ikke ses). Uskarphed og korn kan justeres, så kortet ligner resten af kamerabilledet.
 
 **Overgange:** *Bølge fra fingeren* (standard: radius vokser fra trykpunktet til kortets fjerneste hjørne, blød kant, meget svag lys kant i fronten, easeInOut), *Øjeblikkeligt* (hårdt klip), *Fade*, *Fej oppefra*. Varighed 0,15–1,5 sek. og kantblødhed kan justeres.
 
@@ -95,9 +103,9 @@ Er der intet kort i billedet, sker der intet ved tryk (kun fokus).
 
 Ikonerne drejer med telefonen (CoreMotion, blød animation). FOTO/VIDEO følger iPhonens sprog (da, en, de, sv, nb, fr, es, it, nl, fi, pt, pl, is – ellers engelsk). Tryk i søgeren = gul fokusfirkant (80 pt, 1,25 → 1, tones ud efter 1 sek.). Swipe vandret skifter FOTO/VIDEO. Vend kamera skifter til bagkameraet (uden effekt) med en sløret 3D-vending.
 
-**Billeder og video:** lukkeren gemmer det bearbejdede billede (med farveskiftet) i appens eget galleri (miniaturen åbner det). Gem i Fotos er en kontakt (kun tilføj). VIDEO optager søgerens billede med effekten (H.264, uden lyd).
+**Billeder og video:** lukkeren gemmer det bearbejdede billede (med kortskiftet) i appens eget galleri (miniaturen åbner det). Gem i Fotos er en kontakt (kun tilføj). VIDEO optager søgerens billede med effekten (H.264, uden lyd).
 
-**Batteri og varme:** galleriet stopper kameraet helt. Når menuen er åben, tegnes søgeren ikke; analysen kører videre, fordi forhåndsvisningen og kalibreringen skal bruge den. Vision kører 3 Hz, når intet kort ses. Panik slår analysen fra.
+**Batteri og varme:** galleriet stopper kameraet helt. Når menuen er åben, tegnes søgeren ikke; analysen kører videre, fordi forhåndsvisningen skal bruge den. Vision kører højst 10 Hz og kun 2 Hz, mens kortet følges. Panik slår analysen fra.
 
 ---
 
@@ -109,12 +117,14 @@ Ikonerne drejer med telefonen (CoreMotion, blød animation). FOTO/VIDEO følger 
 
 ## 6. Kendte begrænsninger
 
-- **Ikke testet på fysisk iPhone.** Især: kamerabilledets retning/spejling (vinkel 90°), Vision-firkanten på et rigtigt kort, hvor stærkt skærmens lys farver kortet, og om 30 fps holder på iPhone 12.
-- **Fingre over kortet:** fingre farves aldrig om, men dækker de det meste af kortet, kan masken tabe det.
-- **Stærk refleks** på kortet (blankt lys) bliver hvidt og skiftes ikke.
-- **Meget svagt lys:** støj og lav mætning gør farvemodellen usikker. Kalibrér i optrædenslyset.
-- **Kort der bevæger sig hurtigt:** masken følger med (hurtig op, 4 billeders hold), men meget hurtige bevægelser kan give en kort kant i ægte farve.
-- **Omvendt tilstand** (rødt kort vist som blåt): lys/rosa hud ligger tæt på et rødt kort i lav opløsning. Huden farves aldrig, men kan i op til ca. 5 % af tilfældene tælles som "kort set" (selvtest). Brug *Lær baggrund* med hånden i billedet.
+- **Ikke testet på fysisk iPhone.** Testvideoen er syntetisk (men med det ægte kortbillede). Tjek især: kamerabilledets retning/spejling (vinkel 90°), at Vision finder et rigtigt kort, skarphed på kort afstand (frontkameraets fokus), og tiden pr. billede (menuen viser ms; målt ca. 30 ms på en langsom Linux-server, forventet 10–15 ms på iPhone).
+- **Kun Bicycle Rider Back.** Andre bagsider findes ikke (korrelationen med mønstret er for lav).
+- **Hele kortet skal ses først.** Vision skal se kortets firkant én gang. Ligger kortet helt tæt på linsen eller delvist uden for billedet fra start, findes det ikke.
+- **Fingre over kortet** vises korrekt (kameraets billede). Over det røde kort (omvendt tilstand) ligner hud blækket mere: 93 % af fingerpixels findes i selvtesten mod 99,6 % ved blåt.
+- **Stærk refleks** (blankt lys) på kortet bliver set som "noget over kortet" og vises som det ægte kort.
+- **Meget svagt lys / uskarpt kort:** mønstret bliver svært at finde; kortet godtages så ikke (ingen forkert visning, bare ingen effekt).
+- **iPhone SE** (16:9 uden Face ID): layoutet skaleres ned med sorte kanter i siderne, fordi målene er taget på en 19,5:9-skærm. Den hemmelige zone sidder stadig i skærmens hjørne.
+- **Kort der bevæger sig meget hurtigt** (over ca. 25 px mellem to billeder) kan tabes et øjeblik og findes igen af Vision; i de 4 holdte billeder står målkortet stille.
 - **App-ikonet** er tegnet (Kamera-agtigt), fordi `ref/hjemmeskaerm.png` mangler. Læg dit hjemmeskærm-screenshot i `ref/` og kør `python3 scripts/extract-icons.py --icon x,y,størrelse`.
 - **Video** optages uden lyd (ingen mikrofon-tilladelse). Natfunktion, flash, live og "⋯" er kun udseende (flash med frontkamera giver hvid skærm ved billede).
 - Repoets **standard-branch** blev `claude/…` (første push). Sæt den til `main` under Settings → Branches.
@@ -123,29 +133,29 @@ Ikonerne drejer med telefonen (CoreMotion, blød animation). FOTO/VIDEO følger 
 
 ## 7. Hvad er testet
 
-`ios/KameraPlusTests` (kører på macOS i CI før hver build; lokalt: `cd ios && swift test -c release -Xswiftc -enable-testing`) – **51 tests, alle grønne**:
+`ios/KameraPlusTests` (kører på macOS i CI før hver build; lokalt: `cd ios && swift test -c release -Xswiftc -enable-testing`) – **36 tests, alle grønne**:
 
-- **Farve:** Lab-rundtur (20.000 farver, maks. 1 trin), kendte Lab-værdier, standardpaletter har rigtig farvetone.
-- **Farveoverførsel:** middelfarve ΔE 1,2 mod det ægte målkort (begge retninger), lysmønster bevaret (korrelation 0,998), hvid/grå/sort/papir urørt, **hud aldrig ændret** (10 hudtoner × 3 lysstyrker × 4 paletter), 65³-tabellen mod direkte beregning (gns. ΔE 0,3).
-- **Klassifikator:** blåt kort ja, træ/væg/grå/sort/hud/rødt nej; rødt kort ja men hud nej; følsomhed; tabel = direkte; lært baggrund undertrykker en blålig trøje.
-- **Maske** (syntetiske Rider-agtige kort med hvid kant og mønster, 540×720 → 270×360): 7 baggrunde × 2 farver med fingre IoU ≥ 0,9; ingen falske positiver på hud/træ/hvid væg/loft; kort der fylder hele billedet; kort delvist uden for billedet; Vision-firkant dækker hele kortet; forkert firkant ignoreres; ét tabt billede blinker ikke; kort i bevægelse uden blå forkant (≥ 97 % dækket); skærmens røde/blå lys; køligt rumlys gør ikke væggen til et kort; hit-test (30 %-regel).
+- **Kortbillederne:** begge skabeloner indlæses med målt geometri; blå er blå og rød er rød; samme papirhvidt; **rødt og blåt mønster flugter** (korrelation 0,97 – én pixels forskydning giver 0,55–0,59).
+- **Homografi:** fra 4 punkter, invers, sammensætning.
+- **Sporing** (det ægte kort i syntetiske scener med perspektiv, farvet lys, støj): låser fra en firkant med 4 px støj til **0,05 px hjørnefejl**; følger et kort i bevægelse i 12 billeder uden nye firkanter; finger set som dækket (100 %) og kortet ikke (< 2 %); rødt kort og tom firkant afvises; holder 4 billeder og slipper så.
 - **Overgange:** easing og afsløring monoton i tiden for alle fire typer, bølge fra fingeren til kortets hjørner, hårdt klip, fej oppefra.
 - **Tilstandsmaskine:** tryk på/ved siden af kortet, intet kort = ingen afsløring, kun valgte triggere, genskab-metoder, automatisk genskab kun efter nok tid uden kort (og fra som standard), kortet forlader billedet 300 gange uden at falde tilbage, panik, opstart, eksponeringslås.
 - **Ryst:** 2,5/3/4 Hz rysten og drejerysten udløser; roligt flyt, frem-og-tilbage én gang, løft, vipning, drejning, støj og skub til bordet gør ikke; nedkøling 2 sek.; følsomhed.
 - **Bevægelse/geometri:** orientering med hysterese, vaterlinje, ryst telefonen, stilstand, omregning søger ↔ billede (spejlet, beskåret), firkanter.
-- **Randomiseret selvtest** (fast seed 2026, 5.000 billeder: tilfældige baggrunde, hudtoner, 0–2 fingre, lys, støj, skærmlys der skifter fra kildens til målets farve, halvdelen med Vision-firkant) – kan også køres i appen:
+- **Randomiseret selvtest** (fast seed, ægte kortbilleder, 360×480: tilfældig placering/drejning/perspektiv, baggrunde, hudtoner, 0–2 fingre, rum- og skærmlys, uskarphed, støj; Vision-agtigt startgæt med 1,2 % støj; 10 % det andet kort, 20 % tomme firkanter) – kan også køres i appen:
 
 ```
-5000 billeder (3334 med kort, 1666 uden)
-Maske IoU: gns. 0,961, 5 %-fraktil 0,940
-Kort ikke fundet: 0 (0,0 %)
-Falske positiver (hud, træ, væg …): 2 (0,1 %)
-Farveskift ΔE mod ægte kort: gns. 5,05
-Største ændring af hud: ΔE 0,00
+600 billeder (420 med blåt kort, 60 med det andet kort, 120 uden)
+Kort ikke fundet: 1 (0,2 %)
+Hjørnefejl: median 0,16 px, 95 % 1,13 px
+Fingre fundet: 99,6 % · kort fejlagtigt dækket: gns. 0,7 %, 95 % 1,7 %
+Falske kort (tomme firkanter): 0 (0,0 %) · forkert farve godtaget: 0 (0,0 %)
 ```
-Omvendt (1.500 billeder): IoU 0,977, 0 % misset, 4,8 % falske positiver, hud ΔE 0,00.
+Rødt kort vist som blåt (300 billeder): 0,5 % ikke fundet, hjørnefejl median 0,08 px, fingre 93,3 %, ingen falske.
 
-**UI-tests** (`ios/KameraPlusUITests`, simulator med testvideo): 5 tryk øverst til venstre åbner menuen, 4 tryk gør ikke, 5 tryk over 3 sek. gør ikke, 5 tryk øverst til højre gør intet, "Færdig" ignoreres første sekund, panik slår effekten fra. CI fejler på røde tests.
+**UI-tests** (`ios/KameraPlusUITests`, iPhone 17 Pro-simulator med iOS 26.2, Release-byg, testvideo i stedet for kamera) – **6 tests, alle grønne**: 5 tryk øverst til venstre åbner menuen, 4 tryk gør ikke, 5 tryk over 3 sek. gør ikke, 5 tryk øverst til højre gør intet, "Færdig" ignoreres i spærretiden (testen forlænger den til 4 sek. med `-doneDelay`, fordi simulatoren er for langsom til at ramme 1 sek. præcist), panik (hold 1,4 sek.) slår effekten fra. CI fejler på røde tests.
+
+**Ikke testet automatisk:** selve kameraet (AVFoundation), Vision på rigtige kort, sporing på et rigtigt kamerabillede, Metal-billedet på en rigtig skærm, lukker/galleri/video og volumenknapper – det kræver en fysisk iPhone.
 
 ---
 
@@ -153,19 +163,19 @@ Omvendt (1.500 billeder): IoU 0,977, 0 % misset, 4,8 % falske positiver, hud ΔE
 ```
 ios/project.yml                 XcodeGen (app, logik-tests på macOS, UI-tests)
 ios/Package.swift               kun til at køre logik-testene lokalt (fx Linux)
+ios/Cards/                      de ægte kortbilleder (rider-blue/red .png 1024 px, .rgb 256 px) + rider.json
 ios/KameraPlus/Logic/           ren logik uden UI (testet)
-  ColorMath, Palette            Lab, Gauss-paletter, "Lær kort", lært baggrund
-  ColorTransfer, CardClassifier farveskift og pixelklassifikator (+ opslagstabeller)
-  Illumination, CardAnalyzer    skærmens lys (k) og samlet analyse pr. billede
-  MaskProcessor, Geometry       maske, firkanter, søger ↔ billede
+  CardTemplate, Homography      kortskabeloner, pyramider, geometri; homografier
+  CardTracker                   mønster-sporing, lys, fingermaske
+  Geometry, ColorMath, Image    firkanter, søger ↔ billede, sRGB/lineær, nedskalering
   Transition, EffectState       overgange, tilstandsmaskine, eksponeringslås
-  Shake, Synthetic, SelfTest    ryst/bevægelse, syntetiske kort, selvtest
+  Shake, Synthetic, SelfTest    ryst/bevægelse, syntetiske scener med de ægte kort, selvtest
 ios/KameraPlus/App/             iOS (SwiftUI, AVFoundation, Metal, Vision, CoreMotion)
   Engine.swift                  binder alt sammen (som Engine i MindTrace)
   Pipeline.swift                arbejde pr. kamerabillede
   FrameSource.swift             kamera + syntetisk testvideo (FrameSource-protokol)
   Renderer.swift, Shaders.metal Metal-søger, billeder og video
-  RectangleTracker.swift        Vision
+  RectangleTracker.swift        Vision (kun startgæt)
   CameraUI.swift                kamera-klonen (alle mål i enum L)
   SecretPanel.swift             hemmelig menu
   Gallery.swift                 eget galleri
@@ -173,8 +183,9 @@ ios/KameraPlus/App/             iOS (SwiftUI, AVFoundation, Metal, Vision, CoreM
 ios/KameraPlusTests/            logik-tests
 ios/KameraPlusUITests/          UI-tests
 .github/workflows/ipa.yml       test → build → IPA → release → SideStore-kilde
+scripts/prepare-cards.py        kortbillederne fra ref/rider-*.jpg (pip install opencv-python-headless numpy)
 scripts/extract-icons.py        glyffer (og ikon) skåret ud af ref/
 scripts/make-icon.py            tegnet Kamera-ikon (indtil hjemmeskærm-screenshot)
 scripts/make_source.py          SideStore-kilde
-ref/                            dine screenshots
+ref/                            dine screenshots og kortreferencer, rider-check.png
 ```

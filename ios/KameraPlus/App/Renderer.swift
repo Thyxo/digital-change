@@ -5,7 +5,13 @@ import SwiftUI
 
 /// Skal matche `Uniforms` i Shaders.metal.
 struct RenderUniforms {
+    var hinv0 = SIMD4<Float>(1, 0, 0, 0)
+    var hinv1 = SIMD4<Float>(0, 1, 0, 0)
+    var hinv2 = SIMD4<Float>(0, 0, 1, 0)
     var gain = SIMD4<Float>(1, 1, 1, 1)
+    var offset = SIMD4<Float>(0, 0, 0, 0)
+    var overlay = SIMD4<Float>(0, 0, 0, 0)
+    var cardSize = SIMD2<Float>(1, 1)
     var cropOrigin = SIMD2<Float>(0, 0)
     var cropSize = SIMD2<Float>(1, 1)
     var frameSize = SIMD2<Float>(1, 1)
@@ -20,19 +26,24 @@ struct RenderUniforms {
     var glow: Float = 0
     var showMask: Float = 0
     var flash: Float = 0
-    var lutSize: Float = 2
     var white: Float = 0
+    var feather: Float = 1
+    var overlayRadius: Float = 0
+    var lodBias: Float = 0
+    var grain: Float = 0
+    var seed: Float = 0
 }
 
 /// Hvad motoren vil have tegnet.
 struct EffectRenderState: Equatable {
-    /// Forklædningen tegnes (kort i masken vises som målfarven).
+    /// Forklædningen tegnes (det fysiske kort vises som målkortet).
     var disguise = false
     /// Afsløring i gang (forklædningen slukkes efter planen).
     var plan: RevealPlan?
 }
 
-/// Metal-søgeren: kamerabillede (nul-kopi via CVMetalTextureCache) + kortmaske + 3D-farvetabel.
+/// Metal-søgeren: kamerabillede (nul-kopi via CVMetalTextureCache) + det ægte målkort (Rider Back-PNG med mipmaps),
+/// lagt ind med kortets homografi, lys og fingermaske fra pipelinen.
 /// Tegner ved skærmens takt (30 Hz, 60 Hz under afsløring) og bruger altid det nyeste billede.
 @MainActor
 final class Renderer: NSObject, MTKViewDelegate {
@@ -41,18 +52,24 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var queue: MTLCommandQueue?
     private var pipelineState: MTLRenderPipelineState?
     private var textureCache: CVMetalTextureCache?
-    private var maskTexture: MTLTexture?
-    private var emptyMask: MTLTexture?
-    private var lutTexture: MTLTexture?
-    private var lutSize = 2
+    private var visTexture: MTLTexture?
+    private var emptyVis: MTLTexture?
+    private var cardTextures: [CardColor: MTLTexture] = [:]
     private var uploadedSerial = -1
     private var recordedSerial = -1
+    private var frameCounter: Float = 0
 
     var effect = EffectRenderState() { didSet { updateRate() } }
+    /// Kortet publikum skal se (rødt i "blå vises som rødt").
+    var targetColor: CardColor = .red
+    var geometry: CardGeometry?
     var mirror = true
     var mirrorSaved = false
     var zoom = 1.0
     var showMask = false
+    /// Uskarphed på målkortet (mipmap-niveauer) og korn.
+    var lodBias: Float = 0.5
+    var grain: Float = 0.3
     var flash: Float = 0
     var white: Float = 0
     var paused = false { didSet { view?.isPaused = paused } }
@@ -72,9 +89,24 @@ final class Renderer: NSObject, MTKViewDelegate {
             d.colorAttachments[0].pixelFormat = .bgra8Unorm
             pipelineState = try? device.makeRenderPipelineState(descriptor: d)
         }
-        emptyMask = makeMaskTexture(width: 1, height: 1)
-        if let t = emptyMask { t.replace(region: MTLRegionMake2D(0, 0, 1, 1), mipmapLevel: 0, withBytes: [UInt8(0)], bytesPerRow: 1) }
-        setLUT(Renderer.identityLUT(size: 2), size: 2)
+        emptyVis = makeVisTexture(width: 1, height: 1)
+        emptyVis?.replace(region: MTLRegionMake2D(0, 0, 1, 1), mipmapLevel: 0, withBytes: [UInt8(0), UInt8(128)], bytesPerRow: 2)
+    }
+
+    /// Indlæser de ægte kortbilleder (rider-blue.png / rider-red.png) med mipmaps. Værdierne bruges rå (sRGB-kodet),
+    /// shaderen omregner selv til lineært lys.
+    func loadCards(directory: URL) {
+        guard let device else { return }
+        let loader = MTKTextureLoader(device: device)
+        let opts: [MTKTextureLoader.Option: Any] = [
+            .SRGB: false, .generateMipmaps: true,
+            .textureUsage: NSNumber(value: MTLTextureUsage.shaderRead.rawValue),
+            .textureStorageMode: NSNumber(value: MTLStorageMode.private.rawValue),
+        ]
+        for c in CardColor.allCases {
+            let url = directory.appendingPathComponent("rider-\(c.rawValue).png")
+            if let t = try? loader.newTexture(URL: url, options: opts) { cardTextures[c] = t }
+        }
     }
 
     func makeView() -> MTKView {
@@ -96,34 +128,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         view?.preferredFramesPerSecond = effect.plan != nil ? 60 : 30
     }
 
-    static func identityLUT(size n: Int) -> [UInt8] {
-        var out = [UInt8](repeating: 255, count: n * n * n * 4)
-        for b in 0..<n { for g in 0..<n { for r in 0..<n {
-            let i = ((b * n + g) * n + r) * 4
-            out[i] = UInt8(r * 255 / (n - 1)); out[i + 1] = UInt8(g * 255 / (n - 1)); out[i + 2] = UInt8(b * 255 / (n - 1))
-        } } }
-        return out
-    }
-
-    /// Ny 3D-farvetabel (RGBA8, n³) fra ColorTransfer.buildLUT.
-    func setLUT(_ bytes: [UInt8], size n: Int) {
-        guard let device, bytes.count == n * n * n * 4 else { return }
-        let d = MTLTextureDescriptor()
-        d.textureType = .type3D
-        d.pixelFormat = .rgba8Unorm
-        d.width = n; d.height = n; d.depth = n
-        d.usage = .shaderRead
-        guard let t = device.makeTexture(descriptor: d) else { return }
-        bytes.withUnsafeBytes { raw in
-            t.replace(region: MTLRegionMake3D(0, 0, 0, n, n, n), mipmapLevel: 0, slice: 0,
-                      withBytes: raw.baseAddress!, bytesPerRow: n * 4, bytesPerImage: n * n * 4)
-        }
-        lutTexture = t
-        lutSize = n
-    }
-
-    private func makeMaskTexture(width: Int, height: Int) -> MTLTexture? {
-        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r8Unorm, width: width, height: height, mipmapped: false)
+    private func makeVisTexture(width: Int, height: Int) -> MTLTexture? {
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rg8Unorm, width: width, height: height, mipmapped: false)
         d.usage = .shaderRead
         return device?.makeTexture(descriptor: d)
     }
@@ -137,16 +143,16 @@ final class Renderer: NSObject, MTKViewDelegate {
         return (t, cv)
     }
 
-    private func uploadMask(_ f: FrameOutput) {
+    private func uploadVis(_ f: FrameOutput) {
         guard f.serial != uploadedSerial else { return }
         uploadedSerial = f.serial
-        guard !f.mask.isEmpty else { return }
-        if maskTexture == nil || maskTexture!.width != f.maskWidth || maskTexture!.height != f.maskHeight {
-            maskTexture = makeMaskTexture(width: f.maskWidth, height: f.maskHeight)
+        guard !f.visibility.isEmpty, f.visibility.count == f.visWidth * f.visHeight * 2 else { return }
+        if visTexture == nil || visTexture!.width != f.visWidth || visTexture!.height != f.visHeight {
+            visTexture = makeVisTexture(width: f.visWidth, height: f.visHeight)
         }
-        f.mask.withUnsafeBytes { raw in
-            maskTexture?.replace(region: MTLRegionMake2D(0, 0, f.maskWidth, f.maskHeight), mipmapLevel: 0,
-                                 withBytes: raw.baseAddress!, bytesPerRow: f.maskWidth)
+        f.visibility.withUnsafeBytes { raw in
+            visTexture?.replace(region: MTLRegionMake2D(0, 0, f.visWidth, f.visHeight), mipmapLevel: 0,
+                                withBytes: raw.baseAddress!, bytesPerRow: f.visWidth * 2)
         }
     }
 
@@ -159,12 +165,29 @@ final class Renderer: NSObject, MTKViewDelegate {
         let now = CACurrentMediaTime()
         let map = mapping(f, mirrored: mirrored)
         var u = RenderUniforms()
-        u.gain = SIMD4(Float(f.gain.r), Float(f.gain.g), Float(f.gain.b), 1)
+        if let card = f.card, let g = geometry, let inv = card.homography.inverse {
+            let m = inv.m.map { Float($0) }
+            u.hinv0 = SIMD4(m[0], m[1], m[2], 0)
+            u.hinv1 = SIMD4(m[3], m[4], m[5], 0)
+            u.hinv2 = SIMD4(m[6], m[7], m[8], 0)
+            u.gain = SIMD4(Float(card.gain.x), Float(card.gain.y), Float(card.gain.z), 1)
+            u.offset = SIMD4(Float(card.offset.x), Float(card.offset.y), Float(card.offset.z), 0)
+            let o = g.overlay
+            u.overlay = SIMD4(Float(o.minX), Float(o.minY), Float(o.maxX), Float(o.maxY))
+            u.cardSize = SIMD2(Float(g.width), Float(g.height))
+            u.feather = Float(g.overlayFeather)
+            u.overlayRadius = Float(g.overlayRadius)
+        }
+        u.lodBias = lodBias
+        u.grain = capture ? grain * 0.5 : grain
+        frameCounter += 1
+        u.seed = frameCounter.truncatingRemainder(dividingBy: 97) * 13.7
         u.cropOrigin = SIMD2(Float(map.cropOrigin.x), Float(map.cropOrigin.y))
         u.cropSize = SIMD2(Float(map.cropSize.x), Float(map.cropSize.y))
         u.frameSize = SIMD2(Float(f.frameWidth), Float(f.frameHeight))
         u.mirror = mirrored ? 1 : 0
-        u.effect = (effect.disguise || effect.plan != nil) && !f.mask.isEmpty ? 1 : 0
+        u.effect = (effect.disguise || effect.plan != nil) && f.card != nil && geometry != nil
+            && cardTextures[targetColor] != nil && !f.visibility.isEmpty ? 1 : 0
         if let plan = effect.plan {
             switch plan.kind {
             case .wave: u.kind = 0
@@ -185,7 +208,6 @@ final class Renderer: NSObject, MTKViewDelegate {
         u.showMask = showMask && !capture ? 1 : 0
         u.flash = capture ? 0 : flash
         u.white = capture ? 0 : white
-        u.lutSize = Float(lutSize)
         return u
     }
 
@@ -194,8 +216,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         var u = uniforms
         enc.setRenderPipelineState(pipelineState)
         enc.setFragmentTexture(camera, index: 0)
-        enc.setFragmentTexture(u.effect > 0.5 ? (maskTexture ?? emptyMask) : emptyMask, index: 1)
-        enc.setFragmentTexture(lutTexture, index: 2)
+        enc.setFragmentTexture(u.effect > 0.5 ? (visTexture ?? emptyVis) : emptyVis, index: 1)
+        enc.setFragmentTexture(cardTextures[targetColor] ?? emptyVis, index: 2)
         enc.setFragmentBytes(&u, length: MemoryLayout<RenderUniforms>.stride, index: 0)
         enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
     }
@@ -217,7 +239,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         if let f = mailbox.latest, let ct = cameraTexture(f.pixelBuffer) {
             let tex = ct.0
             keep = ct.1
-            uploadMask(f)
+            uploadVis(f)
             encode(enc, camera: tex, uniforms: uniforms(f, mirrored: mirror, capture: false))
             if let rec = recorder, f.serial != recordedSerial {
                 recordedSerial = f.serial
@@ -233,11 +255,11 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     // MARK: Billeder og video
 
-    /// Gengiv det seneste billede (med effekten, uden lukkerblink og maske) til et billede.
+    /// Gengiv det seneste billede (med effekten, uden lukkerblink og markering) til et billede.
     func capturePhoto() -> CGImage? {
         guard let device, let queue, let f = mailbox.latest, let ct = cameraTexture(f.pixelBuffer) else { return nil }
         let tex = ct.0
-        uploadMask(f)
+        uploadVis(f)
         let map = mapping(f, mirrored: mirrorSaved)
         let w = Int(map.visibleWidth.rounded()), h = Int(map.visibleHeight.rounded())
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: w, height: h, mipmapped: false)

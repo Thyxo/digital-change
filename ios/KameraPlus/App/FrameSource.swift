@@ -174,8 +174,8 @@ final class CameraSource: NSObject, FrameSource, AVCaptureVideoDataOutputSampleB
 
 // MARK: - Testvideo
 
-/// Syntetisk testvideo: et blåt Rider-agtigt kort, der bevæger sig rundt, vipper og forlader billedet en gang imellem,
-/// med en finger på kanten. Bruges i simulatoren, i CI og når "Testvideo" er valgt i menuen.
+/// Syntetisk testvideo: det ægte Rider Back-kort (skabelonens pixels), der bevæger sig rundt, vipper og forlader
+/// billedet en gang imellem, med en finger på kanten. Bruges i simulatoren, i CI og når "Testvideo" er valgt i menuen.
 final class SyntheticSource: FrameSource, @unchecked Sendable {
     weak var sink: FrameSink?
     let isFront = true
@@ -184,9 +184,9 @@ final class SyntheticSource: FrameSource, @unchecked Sendable {
     private var pool: CVPixelBufferPool?
     private var t0 = CACurrentMediaTime()
     private var frame = 0
-    var ink = RGB8(hex: Palette.defaultBlueHex)
+    /// Kortet i testvideoen (det fysiske kort, kameraet "ser").
+    var template: CardTemplate?
 
-    static let renderWidth = 270, renderHeight = 360   // tegnes i analyseopløsning og forstørres ×2
     static let width = 540, height = 720
 
     func start() {
@@ -210,24 +210,25 @@ final class SyntheticSource: FrameSource, @unchecked Sendable {
         guard let sink else { return }
         let time = CACurrentMediaTime() - t0
         frame += 1
-        var s = SynthScene(width: SyntheticSource.renderWidth, height: SyntheticSource.renderHeight)
+        var s = SynthScene(width: SyntheticSource.width, height: SyntheticSource.height)
         s.backdrop = .ceiling
         s.backdropColor = RGB8(214, 214, 210)
         s.noise = 1.5
         s.seed = UInt64(frame)
         let phase = time.truncatingRemainder(dividingBy: 12)
-        if phase < 10 {   // kortet er væk de sidste 2 sekunder af hver runde
+        if phase < 10, let template {   // kortet er væk de sidste 2 sekunder af hver runde
             let W = Double(s.width), H = Double(s.height)
-            var c = SynthCard(center: Point2(W * (0.5 + 0.12 * sin(time * 0.7)), H * (0.5 + 0.08 * sin(time * 1.1))),
-                              width: W * (0.55 + 0.05 * sin(time * 0.5)), angle: 0.25 * sin(time * 0.4), ink: ink)
-            c.lineSpacing = 3
-            c.tilt = 0.08 * sin(time * 0.9)
+            let cw = W * (0.55 + 0.05 * sin(time * 0.5))
+            let c = SynthCard.placed(template, center: Point2(W * (0.5 + 0.1 * sin(time * 0.7)), H * (0.5 + 0.07 * sin(time * 1.1))),
+                                     width: cw, angle: 0.25 * sin(time * 0.4), tiltY: 0.08 * sin(time * 0.9))
             s.card = c
             let q = c.quad
+            (sink as? Pipeline)?.syntheticHint = q
             let a = q.corners[3], b = q.corners[0]
-            s.fingers = [Finger(center: Point2((a.x + b.x) / 2, (a.y + b.y) / 2), rx: c.width * 0.1, ry: c.width * 0.26,
+            s.fingers = [Finger(center: Point2((a.x + b.x) / 2, (a.y + b.y) / 2), rx: cw * 0.1, ry: cw * 0.26,
                                 angle: atan2(b.y - a.y, b.x - a.x) + .pi / 2, color: Synth.skinTones[2])]
         }
+        if s.card == nil { (sink as? Pipeline)?.syntheticHint = nil }
         let img = Synth.render(s).image
         guard let pb = makeBuffer() else { return }
         CVPixelBufferLockBaseAddress(pb, [])
@@ -236,10 +237,9 @@ final class SyntheticSource: FrameSource, @unchecked Sendable {
             let dst = base.assumingMemoryBound(to: UInt8.self)
             img.pixels.withUnsafeBufferPointer { src in
                 for y in 0..<SyntheticSource.height {
-                    let sy = y / 2
                     let row = dst + y * bpr
                     for x in 0..<SyntheticSource.width {
-                        let si = (sy * SyntheticSource.renderWidth + x / 2) * 4
+                        let si = (y * SyntheticSource.width + x) * 4
                         row[x * 4] = src[si + 2]
                         row[x * 4 + 1] = src[si + 1]
                         row[x * 4 + 2] = src[si]
