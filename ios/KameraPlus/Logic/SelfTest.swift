@@ -73,7 +73,9 @@ enum SelfTest {
             let out = Synth.render(scene)
             var cand: [Quad] = []
             if let c = scene.card {
-                cand = [Synth.noisyQuad(c.quad, rng: &rng, sigma: 0.012 * c.quad.shortSide)]
+                // halvdelen uden Vision-firkant: kortet skal findes ud fra blækkets farve alene
+                let noisy = Synth.noisyQuad(c.quad, rng: &rng, sigma: 0.012 * c.quad.shortSide)
+                cand = i % 2 == 0 ? [] : [noisy]
             } else {
                 // en tom firkant (fx en bog eller et billede) af kortstørrelse
                 let cw = rng.range(0.35, 0.65) * Double(width)

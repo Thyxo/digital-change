@@ -121,6 +121,31 @@ final class TrackerTests: XCTestCase {
         XCTAssertGreaterThan(tr.gain.x, tr.gain.z)
     }
 
+    func testLocksFromInkColorWithoutAnyQuad() throws {
+        let t = try Fixtures.templates()
+        let finger = Finger(center: Point2(180, 115), rx: 25, ry: 60, angle: 1.4, color: Synth.skinTones[1])
+        for (tmpl, angle) in [(t.blue, 0.2), (t.blue, -0.5), (t.red, 0.3)] {
+            let (s, out) = scene(tmpl, angle: angle, fingers: [finger])
+            let tracker = CardTracker(template: tmpl)
+            let r = tracker.update(out.image)
+            let tr = try XCTUnwrap(r.track, "ikke fundet uden firkant (\(tmpl.color), \(angle)): \(tracker.lastReject)")
+            XCTAssertLessThan(maxCornerError(tr.quad, s.card!.quad), 0.8)
+        }
+    }
+
+    func testInteriorFalseOcclusionIsRemoved() {
+        // en "plet" midt i området fjernes, en finger fra kanten bliver
+        let w = 20, h = 20
+        var m = [Float](repeating: 0, count: w * h)
+        var inside = [UInt8](repeating: 2, count: w * h)
+        for i in 0..<w { inside[i] = 1 }
+        for y in 8...10 { for x in 8...10 { m[y * w + x] = 1 } }       // plet
+        for y in 1...6 { for x in 2...4 { m[y * w + x] = 1 } }         // finger fra toppen
+        CardTracker.keepEdgeConnected(&m, inside: inside, width: w, height: h)
+        XCTAssertEqual(m[9 * w + 9], 0)
+        XCTAssertEqual(m[3 * w + 3], 1)
+    }
+
     func testFollowsMovingCardWithoutNewQuads() throws {
         let t = try Fixtures.templates()
         let tracker = CardTracker(template: t.blue)
