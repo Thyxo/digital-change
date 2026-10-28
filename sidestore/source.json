@@ -19,6 +19,15 @@
       "screenshots": [],
       "versions": [
         {
+          "version": "1.0.11",
+          "buildVersion": "11",
+          "date": "2026-10-28T13:11:58Z",
+          "localizedDescription": "Build 11",
+          "downloadURL": "https://github.com/Thyxo/digital-change/releases/download/build-11/KameraPlus.ipa",
+          "size": 6830147,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.7",
           "buildVersion": "7",
           "date": "2026-10-28T12:55:13Z",
