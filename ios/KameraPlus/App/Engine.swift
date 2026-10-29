@@ -133,7 +133,7 @@ final class Engine: ObservableObject, PipelineDelegate {
         switch p {
         case .active:
             guard started else { return }
-            // "Altid forklædt, når appen åbnes" – kun efter baggrund (ikke kontrolcenter/notifikationer)
+            // tr("Always disguised when the app opens", "Altid forklædt, når appen åbnes") – kun efter baggrund (ikke kontrolcenter/notifikationer)
             if wasInBackground && settings.has(.onLaunch) && state.restore(.onLaunch) { updateRenderEffect() }
             if wasInBackground { beginWarmup() }
             wasInBackground = false
@@ -297,7 +297,7 @@ final class Engine: ObservableObject, PipelineDelegate {
         for e in state.tick(now: CACurrentMediaTime()) {
             if case .restored(let m) = e {
                 haptics.restored()
-                addLog("Genskab: \(restoreName(m))")
+                addLog(tr("Restore: ", "Genskab: ") + restoreName(m))
             }
         }
         updateRenderEffect()
@@ -318,7 +318,7 @@ final class Engine: ObservableObject, PipelineDelegate {
     }
 
     func pipelineDidShake() {
-        if trigger(.shakeCard, hitCard: true, at: nil) { addLog("Ryst kortet · afsløret (\(transitionName))") }
+        if trigger(.shakeCard, hitCard: true, at: nil) { addLog(tr("Shake card · revealed (\(transitionName))", "Ryst kortet · afsløret (\(transitionName))")) }
     }
 
     func pipelineDidPreview(_ preview: CGImage) {
@@ -345,7 +345,7 @@ final class Engine: ObservableObject, PipelineDelegate {
     func testReveal() {
         state.noteCard(visible: true, at: CACurrentMediaTime())
         if trigger(.test, hitCard: true, at: nil) {
-            addLog("Test: afsløring")
+            addLog(tr("Test: reveal", "Test: afsløring"))
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 MainActor.assumeIsolated { [weak self] in
                     guard let self else { return }
@@ -372,36 +372,36 @@ final class Engine: ObservableObject, PipelineDelegate {
         }
         haptics.restored()
         updateRenderEffect()
-        addLog("Genskab: \(restoreName(m))")
+        addLog(tr("Restore: ", "Genskab: ") + restoreName(m))
     }
 
     func panic() {
         state.panic()
         settings.effectActive = false
         updateRenderEffect()
-        addLog("PANIK – effekten er slået fra")
+        addLog(tr("PANIC – effect switched off", "PANIK – effekten er slået fra"))
     }
 
     var transitionName: String { Engine.name(settings.transition) }
 
     static func name(_ t: TransitionKind) -> String {
         switch t {
-        case .wave: return "bølge"
-        case .instant: return "øjeblikkeligt"
-        case .fade: return "fade"
-        case .sweep: return "fej oppefra"
+        case .wave: return tr("wave", "bølge")
+        case .instant: return tr("instant", "øjeblikkeligt")
+        case .fade: return tr("fade", "fade")
+        case .sweep: return tr("sweep from top", "fej oppefra")
         }
     }
 
     func restoreName(_ m: RestoreMethod) -> String {
         switch m {
-        case .menuButton: return "knap i menuen"
-        case .hiddenZoneHold: return "skjult zone"
-        case .volumeDown: return "volumen ned"
-        case .phoneShake: return "ryst telefonen"
-        case .shutterDoubleTap: return "dobbelttryk på lukker"
-        case .autoNoCard: return "intet kort set"
-        case .onLaunch: return "appen åbnet"
+        case .menuButton: return tr("menu button", "knap i menuen")
+        case .hiddenZoneHold: return tr("hidden zone", "skjult zone")
+        case .volumeDown: return tr("volume down", "volumen ned")
+        case .phoneShake: return tr("shake phone", "ryst telefonen")
+        case .shutterDoubleTap: return tr("double-tap shutter", "dobbelttryk på lukker")
+        case .autoNoCard: return tr("no card seen", "intet kort set")
+        case .onLaunch: return tr("app opened", "appen åbnet")
         }
     }
 
@@ -431,12 +431,12 @@ final class Engine: ObservableObject, PipelineDelegate {
         var triggered = false
         if hit { triggered = trigger(.tapCard, hitCard: true, at: framePoint) }
         if !triggered && settings.has(.tapAnywhere) { triggered = trigger(.tapAnywhere, hitCard: hit, at: framePoint) }
-        let shown = triggered ? "afsløret (\(transitionName))" : (state.isRevealed ? "allerede afsløret" : "kun fokus")
-        addLog("Tryk · \(hit ? "ramte kortet" : "ved siden af") · \(shown)")
+        let shown = triggered ? tr("revealed (\(transitionName))", "afsløret (\(transitionName))") : (state.isRevealed ? tr("already revealed", "allerede afsløret") : tr("focus only", "kun fokus"))
+        addLog("Tryk · \(hit ? tr("hit the card", "ramte kortet") : tr("missed the card", "ved siden af")) · \(shown)")
     }
 
     func hiddenZoneTap() {
-        if trigger(.hiddenZone, hitCard: false, at: nil) { addLog("Skjult zone · afsløret (\(transitionName))") }
+        if trigger(.hiddenZone, hitCard: false, at: nil) { addLog(tr("Hidden zone · revealed (\(transitionName))", "Skjult zone · afsløret (\(transitionName))")) }
     }
 
     func restoreZoneHold() { restore(.hiddenZoneHold) }
@@ -444,7 +444,7 @@ final class Engine: ObservableObject, PipelineDelegate {
     private func volumeUp() {
         guard !panelOpen else { return }
         if settings.has(.volumeUp) {
-            if trigger(.volumeUp, hitCard: false, at: nil) { addLog("Volumen op · afsløret (\(transitionName))") }
+            if trigger(.volumeUp, hitCard: false, at: nil) { addLog(tr("Volume up · revealed (\(transitionName))", "Volumen op · afsløret (\(transitionName))")) }
         } else {
             shutterTap()
         }

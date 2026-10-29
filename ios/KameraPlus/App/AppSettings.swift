@@ -6,7 +6,7 @@ enum DisguiseMode: String, CaseIterable, Identifiable {
     case blueAsRed   // det blå kort vises som rødt (standard)
     case redAsBlue   // omvendt
     var id: String { rawValue }
-    var label: String { self == .blueAsRed ? "Blå vises som rødt" : "Rød vises som blåt" }
+    var label: String { self == .blueAsRed ? tr("Blue shown as red", "Blå vises som rødt") : tr("Red shown as blue", "Rød vises som blåt") }
     /// Kortet kameraet ser.
     var source: CardColor { self == .blueAsRed ? .blue : .red }
     /// Kortet publikum ser.
@@ -17,6 +17,9 @@ enum DisguiseMode: String, CaseIterable, Identifiable {
 /// Startargumenter (fx "-effectActive NO") overskriver, hvilket UI-testene bruger.
 final class AppSettings: ObservableObject {
     private let d = UserDefaults.standard
+
+    /// Sprog i appens egne tekster (standard engelsk).
+    @Published var language: AppLanguage { didSet { d.set(language.rawValue, forKey: "language"); L10n.lang = language } }
 
     // Effekt
     @Published var effectActive: Bool { didSet { d.set(effectActive, forKey: "effectActive") } }
@@ -70,7 +73,7 @@ final class AppSettings: ObservableObject {
 
     init() {
         d.register(defaults: [
-            "effectActive": true, "disguise": DisguiseMode.blueAsRed.rawValue,
+            "language": AppLanguage.en.rawValue, "effectActive": true, "disguise": DisguiseMode.blueAsRed.rawValue,
             "triggers": AppSettings.defaultTriggers.map(\.rawValue),
             "transition": TransitionKind.wave.rawValue, "duration": 0.5, "softness": 0.4,
             "shakeSensitivity": ShakeSensitivity.normal.rawValue,
@@ -81,6 +84,9 @@ final class AppSettings: ObservableObject {
             "grid": true, "level": true, "mirrorViewfinder": true, "mirrorSaved": false, "focusSquare": true,
             "shutterSound": true, "shutterBlink": true, "saveToPhotos": false, "testVideo": false,
         ])
+        let lang = AppLanguage(rawValue: d.string(forKey: "language") ?? "") ?? .en
+        L10n.lang = lang
+        language = lang
         effectActive = d.bool(forKey: "effectActive")
         disguise = DisguiseMode(rawValue: d.string(forKey: "disguise") ?? "") ?? .blueAsRed
         triggers = Set((d.stringArray(forKey: "triggers") ?? []).compactMap(TriggerSource.init(rawValue:)))

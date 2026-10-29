@@ -4,7 +4,7 @@ Vejledning til Claude Code i dette repo.
 
 ## Hvad det er
 
-**KameraPlus** (visningsnavn "Kamera", effekten hedder *Digital Flap*): en native iPhone-app (SwiftUI, iOS 17+, sideloadet via SideStore), der er en pixel-klon af iPhones Kamera med frontkameraet. Det er et magi-rekvisit: et blåt **Bicycle Rider Back**-kort vises live som det **ægte røde Rider Back** (referencebillederne, ikke en farveomregning), og et tryk på kortet afslører det ægte blå kort med en bølge fra fingeren. Appen må aldrig afsløre sig selv. Al UI-tekst er dansk (kameraets egne tekster følger iPhonens sprog).
+**KameraPlus** (visningsnavn "Kamera", effekten hedder *Digital Flap*): en native iPhone-app (SwiftUI, iOS 17+, sideloadet via SideStore), der er en pixel-klon af iPhones Kamera med frontkameraet. Det er et magi-rekvisit: et blåt **Bicycle Rider Back**-kort vises live som det **ægte røde Rider Back** (referencebillederne, ikke en farveomregning), og et tryk på kortet afslører det ægte blå kort med en bølge fra fingeren. Appen må aldrig afsløre sig selv. Appens egne tekster (hemmelig menu, log) er engelske som standard og kan skiftes til dansk i menuen (`tr("English", "Dansk")` i `Localization.swift`; nye tekster skal have begge). Kameraets egne tekster følger iPhonens sprog.
 
 ## Byg og test
 

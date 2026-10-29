@@ -22,7 +22,7 @@ targets:
       path: KameraPlus/Info.plist
       properties:
         CFBundleDisplayName: Kamera
-        CFBundleDevelopmentRegion: da
+        CFBundleDevelopmentRegion: en
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSRequiresIPhoneOS: true
@@ -36,8 +36,8 @@ targets:
         UIRequiresFullScreen: true
         UIUserInterfaceStyle: Dark
         ITSAppUsesNonExemptEncryption: false
-        NSCameraUsageDescription: "Kameraet bruges til at tage billeder."
-        NSPhotoLibraryAddUsageDescription: "Billeder kan gemmes i Fotos."
+        NSCameraUsageDescription: "The camera is used to take photos."
+        NSPhotoLibraryAddUsageDescription: "Photos can be saved to your library."
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dk.thyxo.kameraplus
